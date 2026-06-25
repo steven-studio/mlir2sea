@@ -1,0 +1,11 @@
+/home/steven-studio/mlir2sea/build/CMakeFiles/intrinsics_gen.dir
+/home/steven-studio/mlir2sea/build/CMakeFiles/omp_gen.dir
+/home/steven-studio/mlir2sea/build/CMakeFiles/acc_gen.dir
+/home/steven-studio/mlir2sea/build/CMakeFiles/RISCVTargetParserTableGen.dir
+/home/steven-studio/mlir2sea/build/CMakeFiles/mlir-tablegen-targets.dir
+/home/steven-studio/mlir2sea/build/CMakeFiles/mlir-headers.dir
+/home/steven-studio/mlir2sea/build/CMakeFiles/mlir-generic-headers.dir
+/home/steven-studio/mlir2sea/build/CMakeFiles/mlir-doc.dir
+/home/steven-studio/mlir2sea/build/CMakeFiles/mlir2sea.dir
+/home/steven-studio/mlir2sea/build/CMakeFiles/edit_cache.dir
+/home/steven-studio/mlir2sea/build/CMakeFiles/rebuild_cache.dir
