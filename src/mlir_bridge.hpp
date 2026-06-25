@@ -36,12 +36,15 @@ private:
     void handleFunc(mlir::func::FuncOp func);
     void handleOp(mlir::Operation* op);
 
+    ir_type mlirTypeToIR(mlir::Type type);  // ← 加這行
+
     // arith
     void handleAddi(mlir::Operation* op);
     void handleSubi(mlir::Operation* op);
     void handleMuli(mlir::Operation* op);
     void handleCmpi(mlir::Operation* op);
     void handleConstant(mlir::Operation* op);
+    void handleIndexCast(mlir::Operation* op);
 
     // func
     void handleReturn(mlir::Operation* op);
