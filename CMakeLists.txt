@@ -10,5 +10,5 @@ add_definitions(${LLVM_DEFINITIONS})
 
 add_executable(mlir2sea src/main.cpp)
 target_link_libraries(mlir2sea
-    MLIRParser MLIRFuncDialect MLIRArithDialect
+    MLIRParser MLIRFuncDialect MLIRArithDialect MLIRSCFDialect
     MLIRIR MLIRSupport LLVMSupport)
