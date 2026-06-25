@@ -6,7 +6,9 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "mlir_bridge.hpp"
 #include <iostream>
+#include <cstdio>
 
 int main(int argc, char* argv[]) {
     if (argc < 2) { std::cerr << "Usage: mlir2sea <input.mlir>\n"; return 1; }
@@ -25,20 +27,19 @@ int main(int argc, char* argv[]) {
         mlir::parseSourceFile<mlir::ModuleOp>(srcMgr, &ctx);
     if (!module) { std::cerr << "Parse failed\n"; return 1; }
 
-    module->walk([](mlir::Operation* op) {
-        llvm::StringRef name = op->getName().getStringRef();
-        std::cout << "op: " << name.str();
-        
-        // 顯示 SCF op 的對應 Sea-of-Nodes 節點
-        if (name == "scf.if")       std::cout << " -> IF/MERGE";
-        else if (name == "scf.for") std::cout << " -> LOOP_BEGIN/LOOP_END";
-        else if (name == "scf.while") std::cout << " -> LOOP_BEGIN/LOOP_END";
-        else if (name == "arith.addi") std::cout << " -> ADD";
-        else if (name == "arith.muli") std::cout << " -> MUL";
-        else if (name == "arith.cmpi") std::cout << " -> EQ/NE/LT/...";
-        else if (name == "func.return") std::cout << " -> RETURN";
-        
-        std::cout << "\n";
+    FILE* outFile = fopen("/tmp/mlir2sea_out.c", "w");
+    fprintf(outFile, "#include <stdint.h>\n#include <stdbool.h>\n\n");
+
+    module->walk([&](mlir::func::FuncOp func) {
+        std::string name = func.getName().str();
+        std::cout << "Translating: " << name << "\n";
+        MLIRBridge bridge;
+        bridge.build(func);
+        bridge.emitC(name, outFile);
+        fprintf(outFile, "\n");
     });
+
+    fclose(outFile);
+    std::cout << "Output: /tmp/mlir2sea_out.c\n";
     return 0;
 }
