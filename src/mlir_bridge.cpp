@@ -69,16 +69,19 @@ void MLIRBridge::handleOp(mlir::Operation* op) {
     else if (name == "arith.subi")  handleSubi(op);
     else if (name == "arith.muli")  handleMuli(op);
     else if (name == "arith.cmpi")  handleCmpi(op);
-    else if (name == "arith.cmpf")  handleCmpf(op);  // ← 加這行
+    else if (name == "arith.cmpf")  handleCmpf(op);
+    else if (name == "arith.addf")  handleAddf(op);
+    else if (name == "arith.divf")  handleDivf(op);
+    else if (name == "arith.negf")  handleNegf(op);
     else if (name == "arith.constant") handleConstant(op);
-    else if (name == "arith.index_cast") handleIndexCast(op);  // ← 加
-    else if (name == "math.sqrt")   handleMathSqrt(op);  // ← 加這行
-    else if (name == "math.exp")    handleMathExp(op);  // ← 加
-    else if (name == "math.absf")    handleMathAbs(op);  // ← 加這行
+    else if (name == "arith.index_cast") handleIndexCast(op);
+    else if (name == "math.sqrt")   handleMathSqrt(op);
+    else if (name == "math.exp")    handleMathExp(op);
+    else if (name == "math.absf")    handleMathAbs(op);
     else if (name == "func.return") handleReturn(op);
     else if (name == "scf.if")      handleIf(op);
     else if (name == "scf.for")     handleFor(op);
-    else fprintf(stderr, "unhandled op: %s\n", name.str().c_str());  // ← 加
+    else fprintf(stderr, "unhandled op: %s\n", name.str().c_str());
 }
 
 void MLIRBridge::handleAddi(mlir::Operation* op) {
@@ -138,6 +141,26 @@ void MLIRBridge::handleCmpf(mlir::Operation* op) {
         default: ir_opcode = IR_EQ; break;
     }
     setRef(op->getResult(0), ir_fold2(ctx_, IR_OPT(ir_opcode, ty), lhs, rhs));
+}
+
+void MLIRBridge::handleAddf(mlir::Operation* op) {
+    ir_ref lhs = getRef(op->getOperand(0));
+    ir_ref rhs = getRef(op->getOperand(1));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    setRef(op->getResult(0), ir_fold2(ctx_, IR_OPT(IR_ADD, ty), lhs, rhs));
+}
+
+void MLIRBridge::handleDivf(mlir::Operation* op) {
+    ir_ref lhs = getRef(op->getOperand(0));
+    ir_ref rhs = getRef(op->getOperand(1));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    setRef(op->getResult(0), ir_fold2(ctx_, IR_OPT(IR_DIV, ty), lhs, rhs));
+}
+
+void MLIRBridge::handleNegf(mlir::Operation* op) {
+    ir_ref operand = getRef(op->getOperand(0));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    setRef(op->getResult(0), ir_fold1(ctx_, IR_OPT(IR_NEG, ty), operand));
 }
 
 void MLIRBridge::handleConstant(mlir::Operation* op) {

@@ -43,11 +43,14 @@ private:
     void handleSubi(mlir::Operation* op);
     void handleMuli(mlir::Operation* op);
     void handleCmpi(mlir::Operation* op);
-    void handleCmpf(mlir::Operation* op);  // ← 加這行
+    void handleCmpf(mlir::Operation* op);
+    void handleAddf(mlir::Operation* op);
+    void handleDivf(mlir::Operation* op);
+    void handleNegf(mlir::Operation* op);
     void handleConstant(mlir::Operation* op);
     void handleIndexCast(mlir::Operation* op);
     void handleMathSqrt(mlir::Operation* op);
-    void handleMathExp(mlir::Operation* op);  // ← 加
+    void handleMathExp(mlir::Operation* op);
     void handleMathAbs(mlir::Operation* op);
 
     // func
