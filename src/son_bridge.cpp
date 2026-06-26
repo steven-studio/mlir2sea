@@ -202,6 +202,58 @@ static void emitSoNOp(ir_ctx* ctx, mlir::Operation* op) {
             setRef(ifOp.getResult(0), ir_PHI_2(rty, then_val, else_val));
         }
     }
+    // scf.for
+    else if (auto forOp = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+        ir_ref lb   = getRef(forOp.getLowerBound());
+        ir_ref ub   = getRef(forOp.getUpperBound());
+        ir_ref step = getRef(forOp.getStep());
+
+        ir_ref entry_end = ir_END();
+        ir_ref loop = ir_LOOP_BEGIN(entry_end);
+
+        ir_type idx_ty = mlirTypeToIR(forOp.getInductionVar().getType());
+        ir_ref i_phi = _ir_PHI_2(ctx, idx_ty, lb, IR_UNUSED);
+        setRef(forOp.getInductionVar(), i_phi);
+
+        for (auto [arg, init] : llvm::zip(forOp.getRegionIterArgs(), forOp.getInitArgs())) {
+            ir_type aty = mlirTypeToIR(arg.getType());
+            ir_ref phi = _ir_PHI_2(ctx, aty, getRef(init), IR_UNUSED);
+            setRef(arg, phi);
+        }
+
+        // pre-check
+        ir_ref cond = ir_fold2(ctx, IR_OPT(IR_LT, idx_ty), i_phi, ub);
+        ir_ref if_ref = ir_IF(cond);
+        ir_IF_TRUE(if_ref);
+
+        for (auto& nested : forOp.getBody()->without_terminator())
+            emitSoNOp(ctx, &nested);
+
+        ir_ref i_next = ir_fold2(ctx, IR_OPT(IR_ADD, idx_ty), i_phi, step);
+        ir_PHI_SET_OP(i_phi, 2, i_next);
+
+        auto yield = mlir::cast<mlir::scf::YieldOp>(forOp.getBody()->getTerminator());
+        for (auto [arg, yval] : llvm::zip(forOp.getRegionIterArgs(), yield.getOperands()))
+            ir_PHI_SET_OP(getRef(arg), 2, getRef(yval));
+
+        ir_ref loop_end = ir_LOOP_END();
+        ir_MERGE_SET_OP(loop, 2, loop_end);
+
+        ir_IF_FALSE(if_ref);
+        for (auto [result, arg] : llvm::zip(forOp.getResults(), forOp.getRegionIterArgs()))
+            setRef(result, getRef(arg));
+    }
+    else if (auto o = mlir::dyn_cast<mlir::arith::IndexCastOp>(op)) {
+        ir_ref src = getRef(o.getIn());
+        ir_type dst_ty = mlirTypeToIR(o.getType());
+        ir_type src_ty = mlirTypeToIR(o.getIn().getType());
+        ir_ref result;
+        if (src_ty == IR_ADDR && dst_ty == IR_I32)
+            result = ir_fold1(ctx, IR_OPT(IR_TRUNC, dst_ty), src);
+        else
+            result = ir_fold1(ctx, IR_OPT(IR_ZEXT, dst_ty), src);
+        setRef(o.getResult(), result);
+    }
     // func.return
     else if (auto retOp = mlir::dyn_cast<mlir::func::ReturnOp>(op)) {
         if (retOp.getNumOperands() > 0)
