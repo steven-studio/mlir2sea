@@ -64,4 +64,5 @@ private:
     // scf
     void handleIf(mlir::Operation* op);
     void handleFor(mlir::Operation* op);
+    void handleWhile(mlir::Operation* op);
 };
