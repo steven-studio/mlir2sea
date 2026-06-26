@@ -341,6 +341,32 @@ static void emitSoNOp(ir_ctx* ctx, mlir::Operation* op) {
         ir_ref ptr = ir_fold2(ctx, IR_OPT(IR_ADD, IR_ADDR), base, byte_offset);
         ir_STORE(ptr, getRef(storeOp.getValue()));
     }
+    else if (auto callOp = mlir::dyn_cast<mlir::func::CallOp>(op)) {
+        std::string callee = callOp.getCallee().str();
+        ir_type ret_ty = callOp.getNumResults() > 0 ?
+            mlirTypeToIR(callOp.getResult(0).getType()) : IR_VOID;
+
+        ir_ref fname = ir_string(ctx, callee.c_str());
+
+        // 建 proto（根據參數數量）
+        uint32_t argc = callOp.getNumOperands();
+        ir_str proto = ir_proto_0(ctx, IR_EXTERN, ret_ty);
+
+        ir_ref func_ref = ir_const_func(ctx, fname, proto);
+
+        if (argc == 0) {
+            ir_ref result = ir_CALL(ret_ty, func_ref);
+            if (callOp.getNumResults() > 0)
+                setRef(callOp.getResult(0), result);
+        } else {
+            std::vector<ir_ref> args;
+            for (auto operand : callOp.getOperands())
+                args.push_back(getRef(operand));
+            ir_ref result = ir_CALL_N(ret_ty, func_ref, argc, args.data());
+            if (callOp.getNumResults() > 0)
+                setRef(callOp.getResult(0), result);
+        }
+    }
     // func.return
     else if (auto retOp = mlir::dyn_cast<mlir::func::ReturnOp>(op)) {
         if (retOp.getNumOperands() > 0)
