@@ -1,6 +1,7 @@
 #pragma once
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
@@ -51,6 +52,8 @@ private:
     void handleSitofp(mlir::Operation* op);
     void handleConstant(mlir::Operation* op);
     void handleIndexCast(mlir::Operation* op);
+    void handleMemrefLoad(mlir::Operation* op);
+    void handleMemrefStore(mlir::Operation* op);
     void handleMathSqrt(mlir::Operation* op);
     void handleMathExp(mlir::Operation* op);
     void handleMathAbs(mlir::Operation* op);

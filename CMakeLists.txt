@@ -11,7 +11,7 @@ add_definitions(${LLVM_DEFINITIONS})
 
 add_executable(mlir2sea src/main.cpp src/mlir_bridge.cpp)
 target_link_libraries(mlir2sea
-    MLIRParser MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRMathDialect
+    MLIRParser MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRMathDialect MLIRMemRefDialect
     MLIRIR MLIRSupport LLVMSupport
     ${CMAKE_SOURCE_DIR}/third_party/dstogov-ir/libir.a
     m dl pthread)

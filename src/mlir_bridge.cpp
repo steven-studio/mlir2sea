@@ -39,12 +39,13 @@ ir_type MLIRBridge::mlirTypeToIR(mlir::Type type) {
     if (type.isF32())       return IR_FLOAT;
     if (type.isF64())       return IR_DOUBLE;
     if (type.isa<mlir::IndexType>()) return IR_ADDR;
+    if (type.isa<mlir::MemRefType>()) return IR_ADDR;
     llvm_unreachable("unsupported type");
 }
 
 void MLIRBridge::build(mlir::func::FuncOp func) {
     g_ctx = ctx_;
-    ir_init(ctx_, IR_FUNCTION, 128, 128);
+    ir_init(ctx_, IR_FUNCTION, 1024, 1024);
 
     auto resultTypes = func.getFunctionType().getResults();
     ctx_->ret_type = resultTypes.empty() ? IR_VOID : mlirTypeToIR(resultTypes[0]);
@@ -77,6 +78,8 @@ void MLIRBridge::handleOp(mlir::Operation* op) {
     else if (name == "arith.sitofp") handleSitofp(op);
     else if (name == "arith.constant") handleConstant(op);
     else if (name == "arith.index_cast") handleIndexCast(op);
+    else if (name == "memref.load")  handleMemrefLoad(op);
+    else if (name == "memref.store") handleMemrefStore(op);
     else if (name == "math.sqrt")   handleMathSqrt(op);
     else if (name == "math.exp")    handleMathExp(op);
     else if (name == "math.absf")    handleMathAbs(op);
@@ -231,8 +234,63 @@ void MLIRBridge::handleMathAbs(mlir::Operation* op) {
     setRef(op->getResult(0), ir_fold1(ctx_, IR_OPT(IR_ABS, ty), operand));
 }
 
+void MLIRBridge::handleMemrefLoad(mlir::Operation* op) {
+    auto loadOp = mlir::cast<mlir::memref::LoadOp>(op);
+    auto memrefType = mlir::cast<mlir::MemRefType>(loadOp.getMemref().getType());
+    ir_ref base = getRef(loadOp.getMemref());
+    ir_type elem_ty = mlirTypeToIR(memrefType.getElementType());
+
+    // 計算 linear index
+    auto shape = memrefType.getShape();
+    auto indices = loadOp.getIndices();
+    ir_ref offset = getRef(indices[0]);
+    for (size_t i = 1; i < indices.size(); i++) {
+        ir_val v; v.i64 = shape[i];
+        ir_ref dim = ir_const(ctx_, v, IR_ADDR);
+        offset = ir_fold2(ctx_, IR_OPT(IR_MUL, IR_ADDR), offset, dim);
+        offset = ir_fold2(ctx_, IR_OPT(IR_ADD, IR_ADDR), offset, getRef(indices[i]));
+    }
+
+    // elem_size
+    ir_val sz; sz.i64 = 4; // f32 = 4 bytes
+    ir_ref elem_size = ir_const(ctx_, sz, IR_ADDR);
+    ir_ref byte_offset = ir_fold2(ctx_, IR_OPT(IR_MUL, IR_ADDR), offset, elem_size);
+    ir_ref ptr = ir_fold2(ctx_, IR_OPT(IR_ADD, IR_ADDR), base, byte_offset);
+
+    ir_ref result = ir_LOAD(elem_ty, ptr);
+    setRef(op->getResult(0), result);
+}
+
+void MLIRBridge::handleMemrefStore(mlir::Operation* op) {
+    auto storeOp = mlir::cast<mlir::memref::StoreOp>(op);
+    auto memrefType = mlir::cast<mlir::MemRefType>(storeOp.getMemref().getType());
+    ir_ref base = getRef(storeOp.getMemref());
+    ir_ref value = getRef(storeOp.getValue());
+    ir_type elem_ty = mlirTypeToIR(memrefType.getElementType());
+
+    auto shape = memrefType.getShape();
+    auto indices = storeOp.getIndices();
+    ir_ref offset = getRef(indices[0]);
+    for (size_t i = 1; i < indices.size(); i++) {
+        ir_val v; v.i64 = shape[i];
+        ir_ref dim = ir_const(ctx_, v, IR_ADDR);
+        offset = ir_fold2(ctx_, IR_OPT(IR_MUL, IR_ADDR), offset, dim);
+        offset = ir_fold2(ctx_, IR_OPT(IR_ADD, IR_ADDR), offset, getRef(indices[i]));
+    }
+
+    ir_val sz; sz.i64 = 4;
+    ir_ref elem_size = ir_const(ctx_, sz, IR_ADDR);
+    ir_ref byte_offset = ir_fold2(ctx_, IR_OPT(IR_MUL, IR_ADDR), offset, elem_size);
+    ir_ref ptr = ir_fold2(ctx_, IR_OPT(IR_ADD, IR_ADDR), base, byte_offset);
+
+    ir_STORE(ptr, value);
+}
+
 void MLIRBridge::handleReturn(mlir::Operation* op) {
-    if (op->getNumOperands() == 0) return;
+    if (op->getNumOperands() == 0) {
+        ir_RETURN(IR_UNUSED);  // void return
+        return;
+    }
     ir_RETURN(getRef(op->getOperand(0)));
 }
 
@@ -282,7 +340,10 @@ void MLIRBridge::handleFor(mlir::Operation* op) {
     ir_ref step = getRef(forOp.getStep());
 
     ir_ref entry_end = ir_END();
-    ir_ref loop = ir_LOOP_BEGIN(entry_end);  // 先建，back-edge 之後填
+    fprintf(stderr, "after END, control=%d\n", ctx_->control);
+    ir_ref loop = ir_LOOP_BEGIN(entry_end);
+    fprintf(stderr, "after LOOP_BEGIN, control=%d\n", ctx_->control);
+    ctx_->control = loop;
     fprintf(stderr, "loop=%d control=%d op=%d\n", loop, ctx_->control, ctx_->ir_base[ctx_->control].op);
 
     ir_type idx_ty = mlirTypeToIR(forOp.getInductionVar().getType());
@@ -297,14 +358,15 @@ void MLIRBridge::handleFor(mlir::Operation* op) {
     }
 
     // pre-check
-    ir_ref cond = ir_fold2(ctx_, IR_OPT(IR_LT, idx_ty), i_phi, ub);
+    ir_ref cond = ir_emit2(ctx_, IR_OPT(IR_LT, idx_ty), i_phi, ub);
     ir_ref if_ref = ir_IF(cond);
     ir_IF_TRUE(if_ref);
+    fprintf(stderr, "after IF_TRUE, control=%d\n", ctx_->control);
 
     for (auto& nested : forOp.getBody()->without_terminator())
         handleOp(&nested);
 
-    ir_ref i_next = ir_fold2(ctx_, IR_OPT(IR_ADD, idx_ty), i_phi, step);
+    ir_ref i_next = ir_emit2(ctx_, IR_OPT(IR_ADD, idx_ty), i_phi, step);
     ir_PHI_SET_OP(i_phi, 2, i_next);
 
     auto yield = mlir::cast<mlir::scf::YieldOp>(forOp.getBody()->getTerminator());
@@ -312,17 +374,20 @@ void MLIRBridge::handleFor(mlir::Operation* op) {
         ir_PHI_SET_OP(getRef(arg), 2, getRef(yval));
 
     ir_ref loop_end = ir_LOOP_END();
-    // 把 LOOP_END 接回 LOOP_BEGIN 的第二個 operand
+    fprintf(stderr, "after LOOP_END, control=%d\n", ctx_->control);
     ir_MERGE_SET_OP(loop, 2, loop_end);
     ir_IF_FALSE(if_ref);
+    fprintf(stderr, "after IF_FALSE, control=%d\n", ctx_->control);
+    fprintf(stderr, "handleFor exit, control=%d\n", ctx_->control);
     for (auto [result, arg] : llvm::zip(forOp.getResults(), forOp.getRegionIterArgs()))
         setRef(result, getRef(arg));
+    fprintf(stderr, "handleFor exit, control=%d\n", ctx_->control);
+    fprintf(stderr, "handleFor exit\n");
 }
 
 void MLIRBridge::emitC(const std::string& funcName, FILE* outFile) {
     ir_build_def_use_lists(ctx_);
     ir_build_cfg(ctx_);
-    ir_dump_cfg(ctx_, stderr);
     ir_build_dominators_tree(ctx_);
     ir_find_loops(ctx_);
     ir_gcm(ctx_);
