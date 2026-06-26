@@ -75,6 +75,22 @@ void MLIRBridge::handleOp(mlir::Operation* op) {
     else if (name == "arith.divf")  handleDivf(op);
     else if (name == "arith.negf")  handleNegf(op);
     else if (name == "arith.mulf")   handleMulf(op);
+    else if (name == "arith.subf")   handleSubf(op);
+    else if (name == "arith.divsi")  handleDivsi(op);
+    else if (name == "arith.remsi")  handleRemsi(op);
+    else if (name == "arith.andi")   handleAndi(op);
+    else if (name == "arith.ori")    handleOri(op);
+    else if (name == "arith.xori")   handleXori(op);
+    else if (name == "arith.shli")   handleShli(op);
+    else if (name == "arith.shrsi")  handleShrsi(op);
+    else if (name == "arith.fptosi") handleFptosi(op);
+    else if (name == "arith.uitofp") handleUitofp(op);
+    else if (name == "math.sin")     handleMathSin(op);
+    else if (name == "math.cos")     handleMathCos(op);
+    else if (name == "math.tanh")    handleMathTanh(op);
+    else if (name == "math.log")     handleMathLog(op);
+    else if (name == "math.log2")    handleMathLog2(op);
+    else if (name == "math.pow")     handleMathPow(op);
     else if (name == "arith.sitofp") handleSitofp(op);
     else if (name == "arith.constant") handleConstant(op);
     else if (name == "arith.index_cast") handleIndexCast(op);
@@ -155,6 +171,74 @@ void MLIRBridge::handleAddf(mlir::Operation* op) {
     ir_ref rhs = getRef(op->getOperand(1));
     ir_type ty = mlirTypeToIR(op->getResult(0).getType());
     setRef(op->getResult(0), ir_fold2(ctx_, IR_OPT(IR_ADD, ty), lhs, rhs));
+}
+
+void MLIRBridge::handleSubf(mlir::Operation* op) {
+    ir_ref lhs = getRef(op->getOperand(0));
+    ir_ref rhs = getRef(op->getOperand(1));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    setRef(op->getResult(0), ir_fold2(ctx_, IR_OPT(IR_SUB, ty), lhs, rhs));
+}
+
+void MLIRBridge::handleDivsi(mlir::Operation* op) {
+    ir_ref lhs = getRef(op->getOperand(0));
+    ir_ref rhs = getRef(op->getOperand(1));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    setRef(op->getResult(0), ir_fold2(ctx_, IR_OPT(IR_DIV, ty), lhs, rhs));
+}
+
+void MLIRBridge::handleRemsi(mlir::Operation* op) {
+    ir_ref lhs = getRef(op->getOperand(0));
+    ir_ref rhs = getRef(op->getOperand(1));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    setRef(op->getResult(0), ir_fold2(ctx_, IR_OPT(IR_MOD, ty), lhs, rhs));
+}
+
+void MLIRBridge::handleAndi(mlir::Operation* op) {
+    ir_ref lhs = getRef(op->getOperand(0));
+    ir_ref rhs = getRef(op->getOperand(1));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    setRef(op->getResult(0), ir_fold2(ctx_, IR_OPT(IR_AND, ty), lhs, rhs));
+}
+
+void MLIRBridge::handleOri(mlir::Operation* op) {
+    ir_ref lhs = getRef(op->getOperand(0));
+    ir_ref rhs = getRef(op->getOperand(1));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    setRef(op->getResult(0), ir_fold2(ctx_, IR_OPT(IR_OR, ty), lhs, rhs));
+}
+
+void MLIRBridge::handleXori(mlir::Operation* op) {
+    ir_ref lhs = getRef(op->getOperand(0));
+    ir_ref rhs = getRef(op->getOperand(1));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    setRef(op->getResult(0), ir_fold2(ctx_, IR_OPT(IR_XOR, ty), lhs, rhs));
+}
+
+void MLIRBridge::handleShli(mlir::Operation* op) {
+    ir_ref lhs = getRef(op->getOperand(0));
+    ir_ref rhs = getRef(op->getOperand(1));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    setRef(op->getResult(0), ir_fold2(ctx_, IR_OPT(IR_SHL, ty), lhs, rhs));
+}
+
+void MLIRBridge::handleShrsi(mlir::Operation* op) {
+    ir_ref lhs = getRef(op->getOperand(0));
+    ir_ref rhs = getRef(op->getOperand(1));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    setRef(op->getResult(0), ir_fold2(ctx_, IR_OPT(IR_SAR, ty), lhs, rhs));
+}
+
+void MLIRBridge::handleFptosi(mlir::Operation* op) {
+    ir_ref src = getRef(op->getOperand(0));
+    ir_type dst_ty = mlirTypeToIR(op->getResult(0).getType());
+    setRef(op->getResult(0), ir_fold1(ctx_, IR_OPT(IR_FP2INT, dst_ty), src));
+}
+
+void MLIRBridge::handleUitofp(mlir::Operation* op) {
+    ir_ref src = getRef(op->getOperand(0));
+    ir_type dst_ty = mlirTypeToIR(op->getResult(0).getType());
+    setRef(op->getResult(0), ir_fold1(ctx_, IR_OPT(IR_INT2FP, dst_ty), src));
 }
 
 void MLIRBridge::handleDivf(mlir::Operation* op) {
@@ -265,6 +349,56 @@ void MLIRBridge::handleMathSqrt(mlir::Operation* op) {
     ir_str proto = ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty);
     ir_ref sqrt_func = ir_const_func(ctx_, name, proto);
     setRef(op->getResult(0), ir_CALL_1(ty, sqrt_func, operand));
+}
+
+void MLIRBridge::handleMathSin(mlir::Operation* op) {
+    ir_ref operand = getRef(op->getOperand(0));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    const char* fname = (ty == IR_DOUBLE) ? "sin" : "sinf";
+    ir_ref func = ir_const_func(ctx_, ir_string(ctx_, fname), ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty));
+    setRef(op->getResult(0), ir_CALL_1(ty, func, operand));
+}
+
+void MLIRBridge::handleMathCos(mlir::Operation* op) {
+    ir_ref operand = getRef(op->getOperand(0));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    const char* fname = (ty == IR_DOUBLE) ? "cos" : "cosf";
+    ir_ref func = ir_const_func(ctx_, ir_string(ctx_, fname), ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty));
+    setRef(op->getResult(0), ir_CALL_1(ty, func, operand));
+}
+
+void MLIRBridge::handleMathTanh(mlir::Operation* op) {
+    ir_ref operand = getRef(op->getOperand(0));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    const char* fname = (ty == IR_DOUBLE) ? "tanh" : "tanhf";
+    ir_ref func = ir_const_func(ctx_, ir_string(ctx_, fname), ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty));
+    setRef(op->getResult(0), ir_CALL_1(ty, func, operand));
+}
+
+void MLIRBridge::handleMathLog(mlir::Operation* op) {
+    ir_ref operand = getRef(op->getOperand(0));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    const char* fname = (ty == IR_DOUBLE) ? "log" : "logf";
+    ir_ref func = ir_const_func(ctx_, ir_string(ctx_, fname), ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty));
+    setRef(op->getResult(0), ir_CALL_1(ty, func, operand));
+}
+
+void MLIRBridge::handleMathLog2(mlir::Operation* op) {
+    ir_ref operand = getRef(op->getOperand(0));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    const char* fname = (ty == IR_DOUBLE) ? "log2" : "log2f";
+    ir_ref func = ir_const_func(ctx_, ir_string(ctx_, fname), ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty));
+    setRef(op->getResult(0), ir_CALL_1(ty, func, operand));
+}
+
+void MLIRBridge::handleMathPow(mlir::Operation* op) {
+    ir_ref lhs = getRef(op->getOperand(0));
+    ir_ref rhs = getRef(op->getOperand(1));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    const char* fname = (ty == IR_DOUBLE) ? "pow" : "powf";
+    ir_str proto = ir_proto_2(ctx_, IR_BUILTIN_FUNC, ty, ty, ty);
+    ir_ref func = ir_const_func(ctx_, ir_string(ctx_, fname), proto);
+    setRef(op->getResult(0), ir_CALL_2(ty, func, lhs, rhs));
 }
 
 void MLIRBridge::handleMathExp(mlir::Operation* op) {
