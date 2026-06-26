@@ -87,6 +87,7 @@ void MLIRBridge::handleOp(mlir::Operation* op) {
     else if (name == "scf.if")      handleIf(op);
     else if (name == "scf.for")     handleFor(op);
     else if (name == "scf.while")   handleWhile(op);
+    else if (name == "scf.index_switch") handleIndexSwitch(op);
     else fprintf(stderr, "unhandled op: %s\n", name.str().c_str());
 }
 
@@ -207,6 +208,53 @@ void MLIRBridge::handleIndexCast(mlir::Operation* op) {
     else
         result = ir_fold1(ctx_, IR_OPT(IR_ZEXT, dst_ty), src);
     setRef(op->getResult(0), result);
+}
+
+void MLIRBridge::handleIndexSwitch(mlir::Operation* op) {
+    auto switchOp = mlir::cast<mlir::scf::IndexSwitchOp>(op);
+    ir_ref val = getRef(switchOp.getArg());
+    auto cases = switchOp.getCases();
+    auto regions = switchOp.getCaseRegions();
+
+    llvm::SmallVector<ir_ref> ends;
+    llvm::SmallVector<ir_ref> vals;
+
+    for (auto [caseVal, region] : llvm::zip(cases, regions)) {
+        ir_val v; v.i64 = caseVal;
+        ir_ref c = ir_const(ctx_, v, IR_ADDR);
+        ir_ref cond = ir_fold2(ctx_, IR_OPT(IR_EQ, IR_ADDR), val, c);
+        ir_ref if_ref = ir_IF(cond);
+
+        ir_IF_TRUE(if_ref);
+        for (auto& nested : region.front().without_terminator())
+            handleOp(&nested);
+        auto yield = mlir::cast<mlir::scf::YieldOp>(region.front().getTerminator());
+        ir_ref case_val = yield.getNumOperands() > 0 ? getRef(yield.getOperand(0)) : IR_UNUSED;
+        vals.push_back(case_val);
+        ends.push_back(ir_END());
+
+        ir_IF_FALSE(if_ref);
+    }
+
+    // default
+    auto& defaultRegion = switchOp.getDefaultRegion();
+    for (auto& nested : defaultRegion.front().without_terminator())
+        handleOp(&nested);
+    auto defaultYield = mlir::cast<mlir::scf::YieldOp>(defaultRegion.front().getTerminator());
+    ir_ref default_val = defaultYield.getNumOperands() > 0 ? getRef(defaultYield.getOperand(0)) : IR_UNUSED;
+    vals.push_back(default_val);
+    ends.push_back(ir_END());
+
+    // MERGE_N
+    ir_ref* ends_arr = ends.data();
+    ir_MERGE_N(ends.size(), ends_arr);
+
+    if (switchOp.getNumResults() > 0 && !vals.empty()) {
+        ir_type ty = mlirTypeToIR(switchOp.getResult(0).getType());
+        ir_ref* vals_arr = vals.data();
+        ir_ref phi = ir_PHI_N(ty, vals.size(), vals_arr);
+        setRef(switchOp.getResult(0), phi);
+    }
 }
 
 void MLIRBridge::handleMathSqrt(mlir::Operation* op) {
