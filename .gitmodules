@@ -1,3 +1,6 @@
 [submodule "third_party/dstogov-ir"]
 	path = third_party/dstogov-ir
 	url = https://github.com/dstogov/ir
+[submodule "third_party/son-dialect"]
+	path = third_party/son-dialect
+	url = https://github.com/steven-studio/son-dialect
