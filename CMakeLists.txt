@@ -13,5 +13,10 @@ add_executable(mlir2sea src/main.cpp src/mlir_bridge.cpp)
 target_link_libraries(mlir2sea
     MLIRParser MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRMathDialect MLIRMemRefDialect
     MLIRIR MLIRSupport LLVMSupport
+    MLIRSoN
     ${CMAKE_SOURCE_DIR}/third_party/dstogov-ir/libir.a
     m dl pthread)
+
+# son-dialect
+add_subdirectory(third_party/son-dialect)
+include_directories(third_party/son-dialect/include)
