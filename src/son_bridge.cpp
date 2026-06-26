@@ -243,6 +243,51 @@ static void emitSoNOp(ir_ctx* ctx, mlir::Operation* op) {
         for (auto [result, arg] : llvm::zip(forOp.getResults(), forOp.getRegionIterArgs()))
             setRef(result, getRef(arg));
     }
+    // scf.while
+    else if (auto whileOp = mlir::dyn_cast<mlir::scf::WhileOp>(op)) {
+        ir_ref loop = ir_LOOP_BEGIN(ir_END());
+
+        auto beforeArgs = whileOp.getBeforeArguments();
+        auto initArgs = whileOp.getInits();
+        for (auto [arg, init] : llvm::zip(beforeArgs, initArgs)) {
+            ir_type aty = mlirTypeToIR(arg.getType());
+            ir_ref phi = _ir_PHI_2(ctx, aty, getRef(init), IR_UNUSED);
+            setRef(arg, phi);
+        }
+
+        // before region（條件）
+        for (auto& nested : whileOp.getBefore().front().without_terminator())
+            emitSoNOp(ctx, &nested);
+
+        auto condOp = mlir::cast<mlir::scf::ConditionOp>(
+            whileOp.getBefore().front().getTerminator());
+        ir_ref cond = getRef(condOp.getCondition());
+        ir_ref if_ref = ir_IF(cond);
+        ir_IF_TRUE(if_ref);
+
+        // after block args 對應 condOp args
+        for (auto [afterArg, condArg] : llvm::zip(
+                whileOp.getAfterArguments(), condOp.getArgs()))
+            setRef(afterArg, getRef(condArg));
+
+        // after region（body）
+        for (auto& nested : whileOp.getAfter().front().without_terminator())
+            emitSoNOp(ctx, &nested);
+
+        // yield back-edge
+        auto yield = mlir::cast<mlir::scf::YieldOp>(
+            whileOp.getAfter().front().getTerminator());
+        for (auto [arg, yval] : llvm::zip(beforeArgs, yield.getOperands()))
+            ir_PHI_SET_OP(getRef(arg), 2, getRef(yval));
+
+        ir_ref loop_end = ir_LOOP_END();
+        ir_MERGE_SET_OP(loop, 2, loop_end);
+
+        ir_IF_FALSE(if_ref);
+        for (auto [result, condArg] : llvm::zip(
+                whileOp.getResults(), condOp.getArgs()))
+            setRef(result, getRef(condArg));
+    }
     else if (auto o = mlir::dyn_cast<mlir::arith::IndexCastOp>(op)) {
         ir_ref src = getRef(o.getIn());
         ir_type dst_ty = mlirTypeToIR(o.getType());
