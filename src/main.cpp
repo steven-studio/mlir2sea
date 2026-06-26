@@ -14,7 +14,12 @@
 #include <cstdio>
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) { std::cerr << "Usage: mlir2sea <input.mlir>\n"; return 1; }
+    if (argc < 2) { std::cerr << "Usage: mlir2sea <input.mlir> [--emit-riscv]\n"; return 1; }
+
+    bool emitRISCV = false;
+    for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--emit-riscv") emitRISCV = true;
+    }
 
     mlir::MLIRContext ctx;
     ctx.loadDialect<mlir::func::FuncDialect>();
@@ -32,19 +37,24 @@ int main(int argc, char* argv[]) {
         mlir::parseSourceFile<mlir::ModuleOp>(srcMgr, &ctx);
     if (!module) { std::cerr << "Parse failed\n"; return 1; }
 
-    FILE* outFile = fopen("/tmp/mlir2sea_out.c", "w");
-    fprintf(outFile, "#include <stdint.h>\n#include <stdbool.h>\n\n");
+    const char* outPath = emitRISCV ? "/tmp/mlir2sea_out.s" : "/tmp/mlir2sea_out.c";
+    FILE* outFile = fopen(outPath, "w");
+    if (!emitRISCV)
+        fprintf(outFile, "#include <stdint.h>\n#include <stdbool.h>\n\n");
 
     module->walk([&](mlir::func::FuncOp func) {
         std::string name = func.getName().str();
         std::cout << "Translating: " << name << "\n";
         MLIRBridge bridge;
         bridge.build(func);
-        bridge.emitC(name, outFile);
+        if (emitRISCV)
+            bridge.emitRISCV(name, outFile);
+        else
+            bridge.emitC(name, outFile);
         fprintf(outFile, "\n");
     });
 
     fclose(outFile);
-    std::cout << "Output: /tmp/mlir2sea_out.c\n";
+    std::cout << "Output: " << outPath << "\n";
     return 0;
 }

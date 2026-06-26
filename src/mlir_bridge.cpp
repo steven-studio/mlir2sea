@@ -6,6 +6,7 @@
 extern "C" {
 #include "ir.h"
 #include "ir_builder.h"
+int ir_emit_riscv(ir_ctx *ctx, const char *name, FILE *f);
 }
 
 // 讓所有 ir_builder macro 能找到 ctx
@@ -629,4 +630,16 @@ void MLIRBridge::emitC(const std::string& funcName, FILE* outFile) {
     ir_compute_live_ranges(ctx_);
     ir_coalesce(ctx_);
     ir_emit_c(ctx_, funcName.c_str(), outFile);
+}
+void MLIRBridge::emitRISCV(const std::string& funcName, FILE* outFile) {
+    ir_build_def_use_lists(ctx_);
+    ir_build_cfg(ctx_);
+    ir_build_dominators_tree(ctx_);
+    ir_find_loops(ctx_);
+    ir_gcm(ctx_);
+    ir_schedule(ctx_);
+    ir_assign_virtual_registers(ctx_);
+    ir_compute_live_ranges(ctx_);
+    ir_coalesce(ctx_);
+    ir_emit_riscv(ctx_, funcName.c_str(), outFile);
 }

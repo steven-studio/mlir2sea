@@ -25,6 +25,7 @@ public:
 
     void build(mlir::func::FuncOp func);
     void emitC(const std::string& funcName, FILE* outFile);
+    void emitRISCV(const std::string& funcName, FILE* outFile);
     ir_ctx* getCtx() { return ctx_; }
 
 private:
