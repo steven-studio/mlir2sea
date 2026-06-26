@@ -7,6 +7,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -25,6 +26,7 @@ int main(int argc, char* argv[]) {
     ctx.loadDialect<mlir::arith::ArithDialect>();
     ctx.loadDialect<mlir::func::FuncDialect>();
     ctx.loadDialect<mlir::math::MathDialect>();
+    ctx.loadDialect<mlir::scf::SCFDialect>();
 
     llvm::SourceMgr srcMgr;
     auto buf = llvm::MemoryBuffer::getFile(argv[1]);

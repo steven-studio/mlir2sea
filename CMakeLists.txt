@@ -25,7 +25,7 @@ target_include_directories(mlir2sea PRIVATE
 )
 add_executable(son_mlir2sea src/son_main.cpp src/son_bridge.cpp)
 target_link_libraries(son_mlir2sea
-    MLIRParser MLIRFuncDialect MLIRArithDialect MLIRMathDialect MLIRTransforms
+    MLIRParser MLIRFuncDialect MLIRArithDialect MLIRMathDialect MLIRSCFDialect MLIRTransforms
     MLIRIR MLIRSupport LLVMSupport MLIRSoN
     ${CMAKE_SOURCE_DIR}/third_party/dstogov-ir/libir.a
     m dl pthread)
