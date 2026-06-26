@@ -73,6 +73,8 @@ void MLIRBridge::handleOp(mlir::Operation* op) {
     else if (name == "arith.addf")  handleAddf(op);
     else if (name == "arith.divf")  handleDivf(op);
     else if (name == "arith.negf")  handleNegf(op);
+    else if (name == "arith.mulf")   handleMulf(op);
+    else if (name == "arith.sitofp") handleSitofp(op);
     else if (name == "arith.constant") handleConstant(op);
     else if (name == "arith.index_cast") handleIndexCast(op);
     else if (name == "math.sqrt")   handleMathSqrt(op);
@@ -161,6 +163,19 @@ void MLIRBridge::handleNegf(mlir::Operation* op) {
     ir_ref operand = getRef(op->getOperand(0));
     ir_type ty = mlirTypeToIR(op->getResult(0).getType());
     setRef(op->getResult(0), ir_fold1(ctx_, IR_OPT(IR_NEG, ty), operand));
+}
+
+void MLIRBridge::handleMulf(mlir::Operation* op) {
+    ir_ref lhs = getRef(op->getOperand(0));
+    ir_ref rhs = getRef(op->getOperand(1));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    setRef(op->getResult(0), ir_fold2(ctx_, IR_OPT(IR_MUL, ty), lhs, rhs));
+}
+
+void MLIRBridge::handleSitofp(mlir::Operation* op) {
+    ir_ref src = getRef(op->getOperand(0));
+    ir_type dst_ty = mlirTypeToIR(op->getResult(0).getType());
+    setRef(op->getResult(0), ir_fold1(ctx_, IR_OPT(IR_INT2FP, dst_ty), src));
 }
 
 void MLIRBridge::handleConstant(mlir::Operation* op) {

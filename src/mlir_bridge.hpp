@@ -47,6 +47,8 @@ private:
     void handleAddf(mlir::Operation* op);
     void handleDivf(mlir::Operation* op);
     void handleNegf(mlir::Operation* op);
+    void handleMulf(mlir::Operation* op);
+    void handleSitofp(mlir::Operation* op);
     void handleConstant(mlir::Operation* op);
     void handleIndexCast(mlir::Operation* op);
     void handleMathSqrt(mlir::Operation* op);
