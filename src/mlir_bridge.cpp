@@ -73,6 +73,7 @@ void MLIRBridge::handleOp(mlir::Operation* op) {
     else if (name == "arith.constant") handleConstant(op);
     else if (name == "arith.index_cast") handleIndexCast(op);  // ← 加
     else if (name == "math.sqrt")   handleMathSqrt(op);  // ← 加這行
+    else if (name == "math.exp")    handleMathExp(op);  // ← 加
     else if (name == "func.return") handleReturn(op);
     else if (name == "scf.if")      handleIf(op);
     else if (name == "scf.for")     handleFor(op);
@@ -173,6 +174,16 @@ void MLIRBridge::handleMathSqrt(mlir::Operation* op) {
     ir_str proto = ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty);
     ir_ref sqrt_func = ir_const_func(ctx_, name, proto);
     setRef(op->getResult(0), ir_CALL_1(ty, sqrt_func, operand));
+}
+
+void MLIRBridge::handleMathExp(mlir::Operation* op) {
+    ir_ref operand = getRef(op->getOperand(0));
+    ir_type ty = mlirTypeToIR(op->getResult(0).getType());
+    const char* fname = (ty == IR_DOUBLE) ? "exp" : "expf";
+    ir_str name = ir_string(ctx_, fname);
+    ir_str proto = ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty);
+    ir_ref exp_func = ir_const_func(ctx_, name, proto);
+    setRef(op->getResult(0), ir_CALL_1(ty, exp_func, operand));
 }
 
 void MLIRBridge::handleReturn(mlir::Operation* op) {

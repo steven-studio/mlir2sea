@@ -47,6 +47,7 @@ private:
     void handleConstant(mlir::Operation* op);
     void handleIndexCast(mlir::Operation* op);
     void handleMathSqrt(mlir::Operation* op);
+    void handleMathExp(mlir::Operation* op);  // ← 加
 
     // func
     void handleReturn(mlir::Operation* op);
