@@ -3,6 +3,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include <cstdio>
 #include <unordered_map>
 #include <string>
@@ -298,6 +299,47 @@ static void emitSoNOp(ir_ctx* ctx, mlir::Operation* op) {
         else
             result = ir_fold1(ctx, IR_OPT(IR_ZEXT, dst_ty), src);
         setRef(o.getResult(), result);
+    }
+    else if (auto loadOp = mlir::dyn_cast<mlir::memref::LoadOp>(op)) {
+        auto memrefType = mlir::cast<mlir::MemRefType>(loadOp.getMemRef().getType());
+        ir_ref base = getRef(loadOp.getMemRef());
+        ir_type elem_ty = mlirTypeToIR(memrefType.getElementType());
+
+        // 計算 linear offset（row-major）
+        auto shape = memrefType.getShape();
+        auto indices = loadOp.getIndices();
+        ir_ref offset = getRef(indices[0]);
+        for (size_t d = 1; d < indices.size(); d++) {
+            ir_val dim_val; dim_val.i64 = shape[d];
+            ir_ref dim = ir_const(ctx, dim_val, IR_ADDR);
+            offset = ir_fold2(ctx, IR_OPT(IR_MUL, IR_ADDR), offset, dim);
+            offset = ir_fold2(ctx, IR_OPT(IR_ADD, IR_ADDR), offset, getRef(indices[d]));
+        }
+        ir_val esize; esize.i64 = memrefType.getElementTypeBitWidth() / 8;
+        ir_ref esize_ref = ir_const(ctx, esize, IR_ADDR);
+        ir_ref byte_offset = ir_fold2(ctx, IR_OPT(IR_MUL, IR_ADDR), offset, esize_ref);
+        ir_ref ptr = ir_fold2(ctx, IR_OPT(IR_ADD, IR_ADDR), base, byte_offset);
+        setRef(loadOp.getResult(), ir_LOAD(elem_ty, ptr));
+    }
+    else if (auto storeOp = mlir::dyn_cast<mlir::memref::StoreOp>(op)) {
+        auto memrefType = mlir::cast<mlir::MemRefType>(storeOp.getMemRef().getType());
+        ir_ref base = getRef(storeOp.getMemRef());
+        ir_type elem_ty = mlirTypeToIR(memrefType.getElementType());
+
+        auto shape = memrefType.getShape();
+        auto indices = storeOp.getIndices();
+        ir_ref offset = getRef(indices[0]);
+        for (size_t d = 1; d < indices.size(); d++) {
+            ir_val dim_val; dim_val.i64 = shape[d];
+            ir_ref dim = ir_const(ctx, dim_val, IR_ADDR);
+            offset = ir_fold2(ctx, IR_OPT(IR_MUL, IR_ADDR), offset, dim);
+            offset = ir_fold2(ctx, IR_OPT(IR_ADD, IR_ADDR), offset, getRef(indices[d]));
+        }
+        ir_val esize; esize.i64 = memrefType.getElementTypeBitWidth() / 8;
+        ir_ref esize_ref = ir_const(ctx, esize, IR_ADDR);
+        ir_ref byte_offset = ir_fold2(ctx, IR_OPT(IR_MUL, IR_ADDR), offset, esize_ref);
+        ir_ref ptr = ir_fold2(ctx, IR_OPT(IR_ADD, IR_ADDR), base, byte_offset);
+        ir_STORE(ptr, getRef(storeOp.getValue()));
     }
     // func.return
     else if (auto retOp = mlir::dyn_cast<mlir::func::ReturnOp>(op)) {
