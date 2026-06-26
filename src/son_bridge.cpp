@@ -1,8 +1,10 @@
 #include "SoN/IR/SoNDialect.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include <cstdio>
 #include <unordered_map>
+#include <string>
 
 extern "C" {
 #include "ir.h"
@@ -36,6 +38,20 @@ static ir_type mlirTypeToIR(mlir::Type type) {
     return IR_I32;
 }
 
+static ir_ref emitMathCall(ir_ctx* ctx, const char* fname, ir_type ty, ir_ref arg) {
+    ir_str name = ir_string(ctx, fname);
+    ir_str proto = ir_proto_1(ctx, IR_BUILTIN_FUNC, ty, ty);
+    ir_ref func = ir_const_func(ctx, name, proto);
+    return ir_CALL_1(ty, func, arg);
+}
+
+static ir_ref emitMathCall2(ir_ctx* ctx, const char* fname, ir_type ty, ir_ref a, ir_ref b) {
+    ir_str name = ir_string(ctx, fname);
+    ir_str proto = ir_proto_2(ctx, IR_BUILTIN_FUNC, ty, ty, ty);
+    ir_ref func = ir_const_func(ctx, name, proto);
+    return ir_CALL_2(ty, func, a, b);
+}
+
 void emitSoNFuncToIR(mlir::func::FuncOp func, ir_ctx* ctx, FILE* outFile) {
     g_ctx = ctx;
     value_map.clear();
@@ -55,22 +71,79 @@ void emitSoNFuncToIR(mlir::func::FuncOp func, ir_ctx* ctx, FILE* outFile) {
     }
 
     for (auto& op : func.getBody().front()) {
-        if (auto addOp = mlir::dyn_cast<mlir::son::AddOp>(&op)) {
-            ir_ref lhs = getRef(addOp.getLhs());
-            ir_ref rhs = getRef(addOp.getRhs());
-            ir_type ty = mlirTypeToIR(addOp.getType());
-            setRef(addOp.getResult(), ir_fold2(ctx, IR_OPT(IR_ADD, ty), lhs, rhs));
-        } else if (auto subOp = mlir::dyn_cast<mlir::son::SubOp>(&op)) {
-            ir_ref lhs = getRef(subOp.getLhs());
-            ir_ref rhs = getRef(subOp.getRhs());
-            ir_type ty = mlirTypeToIR(subOp.getType());
-            setRef(subOp.getResult(), ir_fold2(ctx, IR_OPT(IR_SUB, ty), lhs, rhs));
-        } else if (auto mulOp = mlir::dyn_cast<mlir::son::MulOp>(&op)) {
-            ir_ref lhs = getRef(mulOp.getLhs());
-            ir_ref rhs = getRef(mulOp.getRhs());
-            ir_type ty = mlirTypeToIR(mulOp.getType());
-            setRef(mulOp.getResult(), ir_fold2(ctx, IR_OPT(IR_MUL, ty), lhs, rhs));
-        } else if (auto retOp = mlir::dyn_cast<mlir::func::ReturnOp>(&op)) {
+        ir_type ty = op.getNumResults() > 0 ? mlirTypeToIR(op.getResult(0).getType()) : IR_VOID;
+
+        // 整數二元運算
+        if (auto o = mlir::dyn_cast<mlir::son::AddOp>(&op))
+            setRef(o.getResult(), ir_fold2(ctx, IR_OPT(IR_ADD, ty), getRef(o.getLhs()), getRef(o.getRhs())));
+        else if (auto o = mlir::dyn_cast<mlir::son::SubOp>(&op))
+            setRef(o.getResult(), ir_fold2(ctx, IR_OPT(IR_SUB, ty), getRef(o.getLhs()), getRef(o.getRhs())));
+        else if (auto o = mlir::dyn_cast<mlir::son::MulOp>(&op))
+            setRef(o.getResult(), ir_fold2(ctx, IR_OPT(IR_MUL, ty), getRef(o.getLhs()), getRef(o.getRhs())));
+        else if (auto o = mlir::dyn_cast<mlir::son::DivOp>(&op))
+            setRef(o.getResult(), ir_fold2(ctx, IR_OPT(IR_DIV, ty), getRef(o.getLhs()), getRef(o.getRhs())));
+        else if (auto o = mlir::dyn_cast<mlir::son::RemOp>(&op))
+            setRef(o.getResult(), ir_fold2(ctx, IR_OPT(IR_MOD, ty), getRef(o.getLhs()), getRef(o.getRhs())));
+        else if (auto o = mlir::dyn_cast<mlir::son::AndOp>(&op))
+            setRef(o.getResult(), ir_fold2(ctx, IR_OPT(IR_AND, ty), getRef(o.getLhs()), getRef(o.getRhs())));
+        else if (auto o = mlir::dyn_cast<mlir::son::OrOp>(&op))
+            setRef(o.getResult(), ir_fold2(ctx, IR_OPT(IR_OR, ty), getRef(o.getLhs()), getRef(o.getRhs())));
+        else if (auto o = mlir::dyn_cast<mlir::son::XorOp>(&op))
+            setRef(o.getResult(), ir_fold2(ctx, IR_OPT(IR_XOR, ty), getRef(o.getLhs()), getRef(o.getRhs())));
+        else if (auto o = mlir::dyn_cast<mlir::son::ShlOp>(&op))
+            setRef(o.getResult(), ir_fold2(ctx, IR_OPT(IR_SHL, ty), getRef(o.getLhs()), getRef(o.getRhs())));
+        else if (auto o = mlir::dyn_cast<mlir::son::ShrOp>(&op))
+            setRef(o.getResult(), ir_fold2(ctx, IR_OPT(IR_SAR, ty), getRef(o.getLhs()), getRef(o.getRhs())));
+        // 浮點二元運算
+        else if (auto o = mlir::dyn_cast<mlir::son::FAddOp>(&op))
+            setRef(o.getResult(), ir_fold2(ctx, IR_OPT(IR_ADD, ty), getRef(o.getLhs()), getRef(o.getRhs())));
+        else if (auto o = mlir::dyn_cast<mlir::son::FSubOp>(&op))
+            setRef(o.getResult(), ir_fold2(ctx, IR_OPT(IR_SUB, ty), getRef(o.getLhs()), getRef(o.getRhs())));
+        else if (auto o = mlir::dyn_cast<mlir::son::FMulOp>(&op))
+            setRef(o.getResult(), ir_fold2(ctx, IR_OPT(IR_MUL, ty), getRef(o.getLhs()), getRef(o.getRhs())));
+        else if (auto o = mlir::dyn_cast<mlir::son::FDivOp>(&op))
+            setRef(o.getResult(), ir_fold2(ctx, IR_OPT(IR_DIV, ty), getRef(o.getLhs()), getRef(o.getRhs())));
+        else if (auto o = mlir::dyn_cast<mlir::son::FNegOp>(&op))
+            setRef(o.getResult(), ir_fold1(ctx, IR_OPT(IR_NEG, ty), getRef(o.getOperand())));
+        // math unary
+        else if (auto o = mlir::dyn_cast<mlir::son::SqrtOp>(&op))
+            setRef(o.getResult(), emitMathCall(ctx, ty==IR_DOUBLE?"sqrt":"sqrtf", ty, getRef(o.getOperand())));
+        else if (auto o = mlir::dyn_cast<mlir::son::ExpOp>(&op))
+            setRef(o.getResult(), emitMathCall(ctx, ty==IR_DOUBLE?"exp":"expf", ty, getRef(o.getOperand())));
+        else if (auto o = mlir::dyn_cast<mlir::son::SinOp>(&op))
+            setRef(o.getResult(), emitMathCall(ctx, ty==IR_DOUBLE?"sin":"sinf", ty, getRef(o.getOperand())));
+        else if (auto o = mlir::dyn_cast<mlir::son::CosOp>(&op))
+            setRef(o.getResult(), emitMathCall(ctx, ty==IR_DOUBLE?"cos":"cosf", ty, getRef(o.getOperand())));
+        else if (auto o = mlir::dyn_cast<mlir::son::TanhOp>(&op))
+            setRef(o.getResult(), emitMathCall(ctx, ty==IR_DOUBLE?"tanh":"tanhf", ty, getRef(o.getOperand())));
+        else if (auto o = mlir::dyn_cast<mlir::son::LogOp>(&op))
+            setRef(o.getResult(), emitMathCall(ctx, ty==IR_DOUBLE?"log":"logf", ty, getRef(o.getOperand())));
+        else if (auto o = mlir::dyn_cast<mlir::son::Log2Op>(&op))
+            setRef(o.getResult(), emitMathCall(ctx, ty==IR_DOUBLE?"log2":"log2f", ty, getRef(o.getOperand())));
+        else if (auto o = mlir::dyn_cast<mlir::son::AbsOp>(&op))
+            setRef(o.getResult(), ir_fold1(ctx, IR_OPT(IR_ABS, ty), getRef(o.getOperand())));
+        else if (auto o = mlir::dyn_cast<mlir::son::PowOp>(&op))
+            setRef(o.getResult(), emitMathCall2(ctx, ty==IR_DOUBLE?"pow":"powf", ty, getRef(o.getLhs()), getRef(o.getRhs())));
+        // 型別轉換
+        else if (auto o = mlir::dyn_cast<mlir::son::FP2IntOp>(&op))
+            setRef(o.getResult(), ir_fold1(ctx, IR_OPT(IR_FP2INT, ty), getRef(o.getOperand())));
+        else if (auto o = mlir::dyn_cast<mlir::son::Int2FPOp>(&op))
+            setRef(o.getResult(), ir_fold1(ctx, IR_OPT(IR_INT2FP, ty), getRef(o.getOperand())));
+        // const
+        else if (auto o = mlir::dyn_cast<mlir::arith::ConstantOp>(&op)) {
+            ir_type ty = mlirTypeToIR(o.getType());
+            ir_val v;
+            if (auto attr = mlir::dyn_cast<mlir::IntegerAttr>(o.getValue()))
+                v.i64 = attr.getInt();
+            else if (auto attr = mlir::dyn_cast<mlir::FloatAttr>(o.getValue())) {
+                if (ty == IR_FLOAT) v.f = (float)attr.getValueAsDouble();
+                else v.d = attr.getValueAsDouble();
+            }
+            ir_ref c = ir_const(ctx, v, ty);
+            setRef(o.getResult(), ir_fold1(ctx, IR_OPT(IR_COPY, ty), c));
+        }
+        // return
+        else if (auto retOp = mlir::dyn_cast<mlir::func::ReturnOp>(&op)) {
             if (retOp.getNumOperands() > 0)
                 ir_RETURN(getRef(retOp.getOperand(0)));
             else
