@@ -43,6 +43,7 @@ private:
     void handleSubi(mlir::Operation* op);
     void handleMuli(mlir::Operation* op);
     void handleCmpi(mlir::Operation* op);
+    void handleCmpf(mlir::Operation* op);  // ← 加這行
     void handleConstant(mlir::Operation* op);
     void handleIndexCast(mlir::Operation* op);
     void handleMathSqrt(mlir::Operation* op);

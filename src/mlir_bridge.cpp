@@ -69,12 +69,14 @@ void MLIRBridge::handleOp(mlir::Operation* op) {
     else if (name == "arith.subi")  handleSubi(op);
     else if (name == "arith.muli")  handleMuli(op);
     else if (name == "arith.cmpi")  handleCmpi(op);
+    else if (name == "arith.cmpf")  handleCmpf(op);  // ← 加這行
     else if (name == "arith.constant") handleConstant(op);
     else if (name == "arith.index_cast") handleIndexCast(op);  // ← 加
     else if (name == "math.sqrt")   handleMathSqrt(op);  // ← 加這行
     else if (name == "func.return") handleReturn(op);
     else if (name == "scf.if")      handleIf(op);
     else if (name == "scf.for")     handleFor(op);
+    else fprintf(stderr, "unhandled op: %s\n", name.str().c_str());  // ← 加
 }
 
 void MLIRBridge::handleAddi(mlir::Operation* op) {
@@ -117,12 +119,36 @@ void MLIRBridge::handleCmpi(mlir::Operation* op) {
     setRef(op->getResult(0), ir_fold2(ctx_, IR_OPT(ir_opcode, ty), lhs, rhs));
 }
 
+void MLIRBridge::handleCmpf(mlir::Operation* op) {
+    auto cmpf = mlir::cast<mlir::arith::CmpFOp>(op);
+    ir_ref lhs = getRef(op->getOperand(0));
+    ir_ref rhs = getRef(op->getOperand(1));
+    ir_type ty = mlirTypeToIR(op->getOperand(0).getType());
+
+    ir_op ir_opcode;
+    switch (cmpf.getPredicate()) {
+        case mlir::arith::CmpFPredicate::OEQ: ir_opcode = IR_EQ; break;
+        case mlir::arith::CmpFPredicate::ONE: ir_opcode = IR_NE; break;
+        case mlir::arith::CmpFPredicate::OLT: ir_opcode = IR_LT; break;
+        case mlir::arith::CmpFPredicate::OLE: ir_opcode = IR_LE; break;
+        case mlir::arith::CmpFPredicate::OGT: ir_opcode = IR_GT; break;
+        case mlir::arith::CmpFPredicate::OGE: ir_opcode = IR_GE; break;
+        default: ir_opcode = IR_EQ; break;
+    }
+    setRef(op->getResult(0), ir_fold2(ctx_, IR_OPT(ir_opcode, ty), lhs, rhs));
+}
+
 void MLIRBridge::handleConstant(mlir::Operation* op) {
-    auto attr = op->getAttrOfType<mlir::IntegerAttr>("value");
-    if (!attr) return;
     ir_type ty = mlirTypeToIR(op->getResult(0).getType());
     ir_val v;
-    v.i64 = attr.getInt();
+    if (auto attr = op->getAttrOfType<mlir::IntegerAttr>("value")) {
+        v.i64 = attr.getInt();
+    } else if (auto attr = op->getAttrOfType<mlir::FloatAttr>("value")) {
+        if (ty == IR_FLOAT)
+            v.f = (float)attr.getValueAsDouble();
+        else
+            v.d = attr.getValueAsDouble();
+    } else return;
     ir_ref c = ir_const(ctx_, v, ty);
     setRef(op->getResult(0), ir_fold1(ctx_, IR_OPT(IR_COPY, ty), c));
 }
