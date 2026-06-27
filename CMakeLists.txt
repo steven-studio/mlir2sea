@@ -9,7 +9,15 @@ include_directories(${MLIR_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS})
 include_directories(${CMAKE_SOURCE_DIR}/third_party/dstogov-ir)
 add_definitions(${LLVM_DEFINITIONS})
 
-add_executable(mlir2sea src/main.cpp src/mlir_bridge.cpp src/son_bridge.cpp)
+add_executable(mlir2sea
+    src/main.cpp
+    src/mlir_bridge.cpp
+    src/son_bridge.cpp
+    src/bridge/arith_bridge.cpp
+    src/bridge/scf_bridge.cpp
+    src/bridge/math_bridge.cpp
+    src/bridge/memref_bridge.cpp
+)
 target_link_libraries(mlir2sea
     MLIRParser MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRMathDialect MLIRMemRefDialect
     MLIRIR MLIRSupport LLVMSupport
