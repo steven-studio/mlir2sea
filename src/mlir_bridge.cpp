@@ -121,6 +121,7 @@ void MLIRBridge::emitC(const std::string& funcName, FILE* outFile) {
     ir_emit_c(ctx_, funcName.c_str(), outFile);
 }
 void MLIRBridge::emitRISCV(const std::string& funcName, FILE* outFile) {
+    FILE* dbg = fopen("/tmp/dot_ir.txt", "w"); ir_save(ctx_, 0, dbg); fclose(dbg);
     ir_build_def_use_lists(ctx_);
     ir_build_cfg(ctx_);
     ir_build_dominators_tree(ctx_);
