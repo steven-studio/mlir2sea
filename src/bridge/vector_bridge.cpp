@@ -56,6 +56,8 @@ void VectorBridge::emitOp(mlir::Operation* op) {
             emitVectorAddf(op);
     } else if (mlir::isa<mlir::arith::ConstantOp>(op)) {
         emitConstant(op);
+    } else if (mlir::isa<mlir::memref::DimOp>(op)) {
+        emitMemrefDim(op);
     } else if (mlir::isa<mlir::func::ReturnOp>(op)) {
         fprintf(out_, "  return;\n");
     }
@@ -150,5 +152,15 @@ void VectorBridge::emitConstant(mlir::Operation* op) {
         std::string var = newVar();
         setVar(cst.getResult(), var);
         fprintf(out_, "  int %s = %ld;\n", var.c_str(), idxAttr.getInt());
+    }
+}
+void VectorBridge::emitMemrefDim(mlir::Operation* op) {
+    auto dimOp = mlir::cast<mlir::memref::DimOp>(op);
+    std::string var = newVar();
+    setVar(dimOp.getResult(), var);
+    std::string src = getVar(dimOp.getSource());
+    if (auto idxOp = dimOp.getIndex().getDefiningOp<mlir::arith::ConstantOp>()) {
+        int idx = mlir::cast<mlir::IntegerAttr>(idxOp.getValue()).getInt();
+        fprintf(out_, "  size_t %s = _dim_%s_%d;\n", var.c_str(), src.c_str(), idx);
     }
 }

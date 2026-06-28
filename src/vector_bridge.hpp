@@ -28,4 +28,5 @@ private:
     void emitVectorAddf(mlir::Operation* op);
     void emitAffineFor(mlir::Operation* op);
     void emitConstant(mlir::Operation* op);
+    void emitMemrefDim(mlir::Operation* op);
 };
