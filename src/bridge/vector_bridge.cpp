@@ -82,15 +82,31 @@ void VectorBridge::emitTransferRead(mlir::Operation* op) {
     std::string var = newVar();
     setVar(readOp.getResult(), var);
     std::string base = getVar(readOp.getSource());
-    // compute offset from indices
     auto indices = readOp.getIndices();
-    // simplified: assume 2D row-major, shape known
     auto memType = mlir::cast<mlir::MemRefType>(readOp.getSource().getType());
     int cols = memType.getShape()[1];
     std::string i0 = getVar(indices[0]);
     std::string i1 = getVar(indices[1]);
-    fprintf(out_, "  vfloat32m1_t %s = __riscv_vle32_v_f32m1(%s + %s*%d + %s, %d);\n",
-        var.c_str(), base.c_str(), i0.c_str(), cols, i1.c_str(), vlen);
+
+    // Check permutation_map: if it maps to constant 0, it's a broadcast (scalar splat)
+    auto permMap = readOp.getPermutationMap();
+    bool isBroadcast = false;
+    if (permMap.getNumResults() == 1) {
+        if (auto cstExpr = mlir::dyn_cast<mlir::AffineConstantExpr>(permMap.getResult(0))) {
+            if (cstExpr.getValue() == 0) isBroadcast = true;
+        }
+    }
+
+    if (isBroadcast) {
+        // scalar broadcast: load one element and splat
+        fprintf(out_, "  float %s_scalar = %s[%s*%d + %s];\n",
+            var.c_str(), base.c_str(), i0.c_str(), cols, i1.c_str());
+        fprintf(out_, "  vfloat32m1_t %s = __riscv_vfmv_v_f_f32m1(%s_scalar, %d);\n",
+            var.c_str(), var.c_str(), vlen);
+    } else {
+        fprintf(out_, "  vfloat32m1_t %s = __riscv_vle32_v_f32m1(%s + %s*%d + %s, %d);\n",
+            var.c_str(), base.c_str(), i0.c_str(), cols, i1.c_str(), vlen);
+    }
 }
 
 void VectorBridge::emitTransferWrite(mlir::Operation* op) {
