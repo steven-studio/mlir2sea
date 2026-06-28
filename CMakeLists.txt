@@ -17,9 +17,10 @@ add_executable(mlir2sea
     src/bridge/scf_bridge.cpp
     src/bridge/math_bridge.cpp
     src/bridge/memref_bridge.cpp
+    src/bridge/vector_bridge.cpp
 )
 target_link_libraries(mlir2sea
-    MLIRParser MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRMathDialect MLIRMemRefDialect
+    MLIRParser MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRMathDialect MLIRMemRefDialect MLIRVectorDialect MLIRAffineDialect MLIRAffineToStandard
     MLIRIR MLIRSupport LLVMSupport
     MLIRSoN
     ${CMAKE_SOURCE_DIR}/third_party/dstogov-ir/libir.a
