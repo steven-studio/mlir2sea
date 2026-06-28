@@ -32,8 +32,13 @@ void MLIRBridge::handleMemrefLoad(mlir::Operation* op) {
         offset = ir_fold2(ctx_, IR_OPT(IR_ADD, IR_ADDR), offset, getRef(indices[i]));
     }
 
-    // elem_size
-    ir_val sz; sz.i64 = 4; // f32 = 4 bytes
+    // elem_size: compute from element type
+    mlir::Type elemType = memrefType.getElementType();
+    int64_t elemBytes = 4; // default f32
+    if (elemType.isF64() || elemType.isInteger(64)) elemBytes = 8;
+    else if (elemType.isF32() || elemType.isInteger(32)) elemBytes = 4;
+    else if (elemType.isInteger(8)) elemBytes = 1;
+    ir_val sz; sz.i64 = elemBytes;
     ir_ref elem_size = ir_const(ctx_, sz, IR_ADDR);
     ir_ref byte_offset = ir_fold2(ctx_, IR_OPT(IR_MUL, IR_ADDR), offset, elem_size);
     ir_ref ptr = ir_fold2(ctx_, IR_OPT(IR_ADD, IR_ADDR), base, byte_offset);
@@ -60,6 +65,11 @@ void MLIRBridge::handleMemrefStore(mlir::Operation* op) {
     }
 
     ir_val sz; sz.i64 = 4;
+    mlir::Type elemType2 = memrefType.getElementType();
+    int64_t elemBytes2 = 4;
+    if (elemType2.isF64() || elemType2.isInteger(64)) elemBytes2 = 8;
+    else if (elemType2.isF32() || elemType2.isInteger(32)) elemBytes2 = 4;
+    sz.i64 = elemBytes2;
     ir_ref elem_size = ir_const(ctx_, sz, IR_ADDR);
     ir_ref byte_offset = ir_fold2(ctx_, IR_OPT(IR_MUL, IR_ADDR), offset, elem_size);
     ir_ref ptr = ir_fold2(ctx_, IR_OPT(IR_ADD, IR_ADDR), base, byte_offset);
