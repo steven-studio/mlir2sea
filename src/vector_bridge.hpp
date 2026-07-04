@@ -37,6 +37,7 @@ private:
     std::string getDimExpr(mlir::Value memref, int idx);
     void collectDynamicDims(mlir::Operation* root);
     std::string computeFlatOffset(mlir::Value memref, mlir::Operation::operand_range indices);
+    std::string getPhysicalStride(mlir::Value memref, int dim); // element stride for a given dim, from the memref's actual layout
     std::string computeVL(int vlen); // 算這次迭代實際該用的向量長度（處理非對齊邊界）
     std::string computeSafeVL(mlir::Value memref, mlir::Value lastIndexValue, int vlen); // per-memref clipped vl for vle/vse only
     std::string affineExprToStr(mlir::AffineExpr expr,

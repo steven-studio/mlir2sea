@@ -64,15 +64,34 @@ std::string VectorBridge::computeFlatOffset(mlir::Value memref, mlir::Operation:
     int rank = memType.getRank();
     std::string offset;
     for (int d = 0; d < rank; ++d) {
-        std::string term = getVar(indices[d]);
-        // multiply by product of all trailing dims (d+1 .. rank-1)
-        for (int t = d + 1; t < rank; ++t) {
-            term += "*" + getDimExpr(memref, t);
-        }
+        std::string idx = getVar(indices[d]);
+        std::string stride = getPhysicalStride(memref, d);
+        std::string term = (stride == "1") ? idx : ("(" + idx + "*" + stride + ")");
         if (offset.empty()) offset = term;
         else offset += " + " + term;
     }
     return offset.empty() ? "0" : offset;
+}
+
+std::string VectorBridge::getPhysicalStride(mlir::Value memref, int dim) {
+    auto memType = mlir::cast<mlir::MemRefType>(memref.getType());
+    llvm::SmallVector<int64_t, 4> strides;
+    int64_t offset;
+    if (mlir::succeeded(mlir::getStridesAndOffset(memType, strides, offset))) {
+        if (strides[dim] != mlir::ShapedType::kDynamic) {
+            return std::to_string(strides[dim]);
+        }
+    }
+    // Dynamic stride, or layout not statically representable — fall back to
+    // the row-major assumption (product of trailing dim sizes), which is
+    // correct for any memref without an explicit non-default layout.
+    auto shape = memType.getShape();
+    std::string prod;
+    for (int t = dim + 1; t < memType.getRank(); ++t) {
+        std::string d = getDimExpr(memref, t);
+        prod = prod.empty() ? d : (prod + "*" + d);
+    }
+    return prod.empty() ? "1" : prod;
 }
 
 std::string VectorBridge::computeVL(int vlen) {
@@ -269,7 +288,8 @@ void VectorBridge::emitTransferRead(mlir::Operation* op) {
     auto readOp = mlir::cast<mlir::vector::TransferReadOp>(op);
     auto vecType = mlir::cast<mlir::VectorType>(readOp.getType());
     int vlen = vecType.getShape()[0];
-    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    std::string var = newVar();
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);
+    std::string var = newVar();
     setVar(readOp.getResult(), var);
     std::string base = getVar(readOp.getSource());
     auto indices = readOp.getIndices();
@@ -289,11 +309,20 @@ void VectorBridge::emitTransferRead(mlir::Operation* op) {
         fprintf(out_, "  %s %s = __riscv_vfmv_v_f_%s(%s_scalar, %s);\n",
             tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
             var.c_str(), computeVL(vlen).c_str());
-    } else {
-        std::string vl = computeSafeVL(readOp.getSource(), indices.back(), vlen);
+        return;
+    }
+
+    auto srcMemType = mlir::cast<mlir::MemRefType>(readOp.getSource().getType());
+    std::string innerStride = getPhysicalStride(readOp.getSource(), srcMemType.getRank() - 1);
+    std::string vl = computeSafeVL(readOp.getSource(), indices.back(), vlen);
+    if (innerStride == "1") {
         fprintf(out_, "  %s %s = __riscv_vle%s_v_%s(%s + %s, %s);\n",
             tinfo.vecCType.c_str(), var.c_str(), tinfo.bitwidth.c_str(), tinfo.suffix.c_str(),
             base.c_str(), offset.c_str(), vl.c_str());
+    } else {
+        fprintf(out_, "  %s %s = __riscv_vlse%s_v_%s(%s + %s, %s * sizeof(%s), %s);\n",
+            tinfo.vecCType.c_str(), var.c_str(), tinfo.bitwidth.c_str(), tinfo.suffix.c_str(),
+            base.c_str(), offset.c_str(), innerStride.c_str(), tinfo.scalarCType.c_str(), vl.c_str());
     }
 }
 
@@ -307,9 +336,19 @@ void VectorBridge::emitTransferWrite(mlir::Operation* op) {
     auto indices = writeOp.getIndices();
     std::string offset = computeFlatOffset(writeOp.getSource(), indices);
     std::string vl = computeSafeVL(writeOp.getSource(), indices.back(), vlen);
-    fprintf(out_, "  __riscv_vse%s_v_%s(%s + %s, %s, %s);\n",
-        tinfo.bitwidth.c_str(), tinfo.suffix.c_str(),
-        base.c_str(), offset.c_str(), vec.c_str(), vl.c_str());
+
+    auto dstMemType = mlir::cast<mlir::MemRefType>(writeOp.getSource().getType());
+    std::string innerStride = getPhysicalStride(writeOp.getSource(), dstMemType.getRank() - 1);
+    if (innerStride == "1") {
+        fprintf(out_, "  __riscv_vse%s_v_%s(%s + %s, %s, %s);\n",
+            tinfo.bitwidth.c_str(), tinfo.suffix.c_str(),
+            base.c_str(), offset.c_str(), vec.c_str(), vl.c_str());
+    } else {
+        fprintf(out_, "  __riscv_vsse%s_v_%s(%s + %s, %s * sizeof(%s), %s, %s);\n",
+            tinfo.bitwidth.c_str(), tinfo.suffix.c_str(),
+            base.c_str(), offset.c_str(), innerStride.c_str(), tinfo.scalarCType.c_str(),
+            vec.c_str(), vl.c_str());
+    }
 }
 
 void VectorBridge::emitVectorMulf(mlir::Operation* op) {
