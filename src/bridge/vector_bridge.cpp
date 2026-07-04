@@ -20,9 +20,50 @@ void VectorBridge::setVar(mlir::Value v, const std::string& name) {
     value_map_[v.getAsOpaquePointer()] = name;
 }
 
+std::string VectorBridge::getDim(mlir::Value memref, int idx) {
+    auto it = dim_map_.find(memref.getAsOpaquePointer());
+    if (it == dim_map_.end()) return "";
+    auto it2 = it->second.find(idx);
+    return it2 == it->second.end() ? "" : it2->second;
+}
+
+void VectorBridge::setDim(mlir::Value memref, int idx, const std::string& name) {
+    dim_map_[memref.getAsOpaquePointer()][idx] = name;
+}
+
+std::string VectorBridge::getDimExpr(mlir::Value memref, int idx) {
+    auto memType = mlir::cast<mlir::MemRefType>(memref.getType());
+    int64_t shape = memType.getShape()[idx];
+    if (shape != mlir::ShapedType::kDynamic) {
+        return std::to_string(shape); // static: safe to inline as a literal
+    }
+    std::string v = getDim(memref, idx);
+    if (!v.empty()) return v;
+    // Dynamic dim we never saw a memref.dim for — don't silently emit 0.
+    return "/*UNRESOLVED_DYNAMIC_DIM*/1";
+}
+
+void VectorBridge::collectDynamicDims(mlir::Operation* root) {
+    auto func = mlir::cast<mlir::func::FuncOp>(root);
+    for (auto arg : func.getArguments()) {
+        auto memType = mlir::dyn_cast<mlir::MemRefType>(arg.getType());
+        if (!memType) continue;
+        auto shape = memType.getShape();
+        for (size_t idx = 0; idx < shape.size(); ++idx) {
+            if (shape[idx] != mlir::ShapedType::kDynamic) continue;
+            if (!getDim(arg, idx).empty()) continue; // 已登記過就跳過
+            std::string name = "dim_p" + std::to_string(arg.getArgNumber())
+                              + "_" + std::to_string(idx);
+            setDim(arg, idx, name);
+        }
+    }
+}
+
 void VectorBridge::emitFunc(mlir::func::FuncOp func) {
-    // emit function signature
     fprintf(out_, "#include <riscv_vector.h>\n\n");
+
+    collectDynamicDims(func.getOperation()); // 先掃一遍，決定要加哪些 size_t 參數
+
     fprintf(out_, "void %s(", func.getName().str().c_str());
     bool first = true;
     for (auto arg : func.getArguments()) {
@@ -32,11 +73,16 @@ void VectorBridge::emitFunc(mlir::func::FuncOp func) {
         setVar(arg, name);
         fprintf(out_, "float* %s", name.c_str());
     }
+    for (auto arg : func.getArguments()) {
+        auto it = dim_map_.find(arg.getAsOpaquePointer());
+        if (it == dim_map_.end()) continue;
+        for (auto& [idx, name] : it->second) {
+            fprintf(out_, ", size_t %s", name.c_str());
+        }
+    }
     fprintf(out_, ") {\n");
     for (auto& block : func.getBody()) {
-        for (auto& op : block) {
-            emitOp(&op);
-        }
+        for (auto& op : block) emitOp(&op);
     }
     fprintf(out_, "}\n");
 }
@@ -67,13 +113,24 @@ void VectorBridge::emitAffineFor(mlir::Operation* op) {
     auto forOp = mlir::cast<mlir::affine::AffineForOp>(op);
     std::string iv = newVar();
     setVar(forOp.getInductionVar(), iv);
-    fprintf(out_, "  for (int %s = %ld; %s < %ld; %s += %ld) {\n",
-        iv.c_str(), forOp.getConstantLowerBound(),
-        iv.c_str(), forOp.getConstantUpperBound(),
-        iv.c_str(), forOp.getStepAsInt());
-    for (auto& nested : forOp.getBody()->without_terminator()) {
-        emitOp(&nested);
+
+    std::string lo, hi;
+    if (forOp.hasConstantLowerBound()) {
+        lo = std::to_string(forOp.getConstantLowerBound());
+    } else {
+        auto ops = forOp.getLowerBoundOperands();
+        lo = !ops.empty() ? getVar(ops[0]) : "/*UNSUPPORTED_LB*/0";
     }
+    if (forOp.hasConstantUpperBound()) {
+        hi = std::to_string(forOp.getConstantUpperBound());
+    } else {
+        auto ops = forOp.getUpperBoundOperands();
+        hi = !ops.empty() ? getVar(ops[0]) : "/*UNSUPPORTED_UB*/0";
+    }
+
+    fprintf(out_, "  for (int %s = %s; %s < %s; %s += %ld) {\n",
+        iv.c_str(), lo.c_str(), iv.c_str(), hi.c_str(), iv.c_str(), forOp.getStepAsInt());
+    for (auto& nested : forOp.getBody()->without_terminator()) emitOp(&nested);
     fprintf(out_, "  }\n");
 }
 
@@ -85,12 +142,10 @@ void VectorBridge::emitTransferRead(mlir::Operation* op) {
     setVar(readOp.getResult(), var);
     std::string base = getVar(readOp.getSource());
     auto indices = readOp.getIndices();
-    auto memType = mlir::cast<mlir::MemRefType>(readOp.getSource().getType());
-    int cols = memType.getShape()[1];
+    std::string cols = getDimExpr(readOp.getSource(), 1);
     std::string i0 = getVar(indices[0]);
     std::string i1 = getVar(indices[1]);
 
-    // Check permutation_map: if it maps to constant 0, it's a broadcast (scalar splat)
     auto permMap = readOp.getPermutationMap();
     bool isBroadcast = false;
     if (permMap.getNumResults() == 1) {
@@ -100,14 +155,13 @@ void VectorBridge::emitTransferRead(mlir::Operation* op) {
     }
 
     if (isBroadcast) {
-        // scalar broadcast: load one element and splat
-        fprintf(out_, "  float %s_scalar = %s[%s*%d + %s];\n",
-            var.c_str(), base.c_str(), i0.c_str(), cols, i1.c_str());
+        fprintf(out_, "  float %s_scalar = %s[%s*%s + %s];\n",
+            var.c_str(), base.c_str(), i0.c_str(), cols.c_str(), i1.c_str());
         fprintf(out_, "  vfloat32m1_t %s = __riscv_vfmv_v_f_f32m1(%s_scalar, %d);\n",
             var.c_str(), var.c_str(), vlen);
     } else {
-        fprintf(out_, "  vfloat32m1_t %s = __riscv_vle32_v_f32m1(%s + %s*%d + %s, %d);\n",
-            var.c_str(), base.c_str(), i0.c_str(), cols, i1.c_str(), vlen);
+        fprintf(out_, "  vfloat32m1_t %s = __riscv_vle32_v_f32m1(%s + %s*%s + %s, %d);\n",
+            var.c_str(), base.c_str(), i0.c_str(), cols.c_str(), i1.c_str(), vlen);
     }
 }
 
@@ -118,12 +172,11 @@ void VectorBridge::emitTransferWrite(mlir::Operation* op) {
     std::string vec = getVar(writeOp.getVector());
     std::string base = getVar(writeOp.getSource());
     auto indices = writeOp.getIndices();
-    auto memType = mlir::cast<mlir::MemRefType>(writeOp.getSource().getType());
-    int cols = memType.getShape()[1];
+    std::string cols = getDimExpr(writeOp.getSource(), 1);
     std::string i0 = getVar(indices[0]);
     std::string i1 = getVar(indices[1]);
-    fprintf(out_, "  __riscv_vse32_v_f32m1(%s + %s*%d + %s, %s, %d);\n",
-        base.c_str(), i0.c_str(), cols, i1.c_str(), vec.c_str(), vlen);
+    fprintf(out_, "  __riscv_vse32_v_f32m1(%s + %s*%s + %s, %s, %d);\n",
+        base.c_str(), i0.c_str(), cols.c_str(), i1.c_str(), vec.c_str(), vlen);
 }
 
 void VectorBridge::emitVectorMulf(mlir::Operation* op) {
@@ -156,11 +209,18 @@ void VectorBridge::emitConstant(mlir::Operation* op) {
 }
 void VectorBridge::emitMemrefDim(mlir::Operation* op) {
     auto dimOp = mlir::cast<mlir::memref::DimOp>(op);
+    mlir::Value src = dimOp.getSource();
+    auto idxOp = dimOp.getIndex().getDefiningOp<mlir::arith::ConstantOp>();
+    if (!idxOp) return;
+    int idx = mlir::cast<mlir::IntegerAttr>(idxOp.getValue()).getInt();
+
+    std::string dimVar = getDim(src, idx);
+    if (!dimVar.empty()) {
+        setVar(dimOp.getResult(), dimVar); // 已經是函式參數了，SSA result 直接指過去
+        return;
+    }
+    auto memType = mlir::cast<mlir::MemRefType>(src.getType());
     std::string var = newVar();
     setVar(dimOp.getResult(), var);
-    std::string src = getVar(dimOp.getSource());
-    if (auto idxOp = dimOp.getIndex().getDefiningOp<mlir::arith::ConstantOp>()) {
-        int idx = mlir::cast<mlir::IntegerAttr>(idxOp.getValue()).getInt();
-        fprintf(out_, "  size_t %s = _dim_%s_%d;\n", var.c_str(), src.c_str(), idx);
-    }
+    fprintf(out_, "  size_t %s = %ld;\n", var.c_str(), memType.getShape()[idx]);
 }
