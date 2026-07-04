@@ -59,6 +59,22 @@ void VectorBridge::collectDynamicDims(mlir::Operation* root) {
     }
 }
 
+std::string VectorBridge::computeFlatOffset(mlir::Value memref, mlir::Operation::operand_range indices) {
+    auto memType = mlir::cast<mlir::MemRefType>(memref.getType());
+    int rank = memType.getRank();
+    std::string offset;
+    for (int d = 0; d < rank; ++d) {
+        std::string term = getVar(indices[d]);
+        // multiply by product of all trailing dims (d+1 .. rank-1)
+        for (int t = d + 1; t < rank; ++t) {
+            term += "*" + getDimExpr(memref, t);
+        }
+        if (offset.empty()) offset = term;
+        else offset += " + " + term;
+    }
+    return offset.empty() ? "0" : offset;
+}
+
 void VectorBridge::emitFunc(mlir::func::FuncOp func) {
     fprintf(out_, "#include <riscv_vector.h>\n\n");
 
@@ -94,12 +110,18 @@ void VectorBridge::emitOp(mlir::Operation* op) {
         emitTransferRead(op);
     } else if (mlir::isa<mlir::vector::TransferWriteOp>(op)) {
         emitTransferWrite(op);
+    } else if (mlir::isa<mlir::vector::BroadcastOp>(op)) {
+        emitVectorBroadcast(op);
     } else if (auto mulf = mlir::dyn_cast<mlir::arith::MulFOp>(op)) {
         if (mlir::isa<mlir::VectorType>(mulf.getType()))
             emitVectorMulf(op);
     } else if (auto addf = mlir::dyn_cast<mlir::arith::AddFOp>(op)) {
         if (mlir::isa<mlir::VectorType>(addf.getType()))
             emitVectorAddf(op);
+    } else if (mlir::isa<mlir::arith::SubIOp>(op)) {
+        emitSubI(op);
+    } else if (mlir::isa<mlir::arith::AddIOp>(op)) {
+        emitAddI(op);
     } else if (mlir::isa<mlir::arith::ConstantOp>(op)) {
         emitConstant(op);
     } else if (mlir::isa<mlir::memref::DimOp>(op)) {
@@ -142,9 +164,7 @@ void VectorBridge::emitTransferRead(mlir::Operation* op) {
     setVar(readOp.getResult(), var);
     std::string base = getVar(readOp.getSource());
     auto indices = readOp.getIndices();
-    std::string cols = getDimExpr(readOp.getSource(), 1);
-    std::string i0 = getVar(indices[0]);
-    std::string i1 = getVar(indices[1]);
+    std::string offset = computeFlatOffset(readOp.getSource(), indices);
 
     auto permMap = readOp.getPermutationMap();
     bool isBroadcast = false;
@@ -155,13 +175,13 @@ void VectorBridge::emitTransferRead(mlir::Operation* op) {
     }
 
     if (isBroadcast) {
-        fprintf(out_, "  float %s_scalar = %s[%s*%s + %s];\n",
-            var.c_str(), base.c_str(), i0.c_str(), cols.c_str(), i1.c_str());
+        fprintf(out_, "  float %s_scalar = %s[%s];\n",
+            var.c_str(), base.c_str(), offset.c_str());
         fprintf(out_, "  vfloat32m1_t %s = __riscv_vfmv_v_f_f32m1(%s_scalar, %d);\n",
             var.c_str(), var.c_str(), vlen);
     } else {
-        fprintf(out_, "  vfloat32m1_t %s = __riscv_vle32_v_f32m1(%s + %s*%s + %s, %d);\n",
-            var.c_str(), base.c_str(), i0.c_str(), cols.c_str(), i1.c_str(), vlen);
+        fprintf(out_, "  vfloat32m1_t %s = __riscv_vle32_v_f32m1(%s + %s, %d);\n",
+            var.c_str(), base.c_str(), offset.c_str(), vlen);
     }
 }
 
@@ -172,11 +192,9 @@ void VectorBridge::emitTransferWrite(mlir::Operation* op) {
     std::string vec = getVar(writeOp.getVector());
     std::string base = getVar(writeOp.getSource());
     auto indices = writeOp.getIndices();
-    std::string cols = getDimExpr(writeOp.getSource(), 1);
-    std::string i0 = getVar(indices[0]);
-    std::string i1 = getVar(indices[1]);
-    fprintf(out_, "  __riscv_vse32_v_f32m1(%s + %s*%s + %s, %s, %d);\n",
-        base.c_str(), i0.c_str(), cols.c_str(), i1.c_str(), vec.c_str(), vlen);
+    std::string offset = computeFlatOffset(writeOp.getSource(), indices);
+    fprintf(out_, "  __riscv_vse32_v_f32m1(%s + %s, %s, %d);\n",
+        base.c_str(), offset.c_str(), vec.c_str(), vlen);
 }
 
 void VectorBridge::emitVectorMulf(mlir::Operation* op) {
@@ -205,8 +223,39 @@ void VectorBridge::emitConstant(mlir::Operation* op) {
         std::string var = newVar();
         setVar(cst.getResult(), var);
         fprintf(out_, "  int %s = %ld;\n", var.c_str(), idxAttr.getInt());
+    } else if (auto fAttr = mlir::dyn_cast<mlir::FloatAttr>(cst.getValue())) {
+        std::string var = newVar();
+        setVar(cst.getResult(), var);
+        fprintf(out_, "  float %s = %g;\n", var.c_str(), fAttr.getValueAsDouble());
     }
 }
+
+void VectorBridge::emitSubI(mlir::Operation* op) {
+    auto subi = mlir::cast<mlir::arith::SubIOp>(op);
+    std::string var = newVar();
+    setVar(subi.getResult(), var);
+    fprintf(out_, "  int %s = %s - %s;\n", var.c_str(),
+        getVar(subi.getLhs()).c_str(), getVar(subi.getRhs()).c_str());
+}
+
+void VectorBridge::emitAddI(mlir::Operation* op) {
+    auto addi = mlir::cast<mlir::arith::AddIOp>(op);
+    std::string var = newVar();
+    setVar(addi.getResult(), var);
+    fprintf(out_, "  int %s = %s + %s;\n", var.c_str(),
+        getVar(addi.getLhs()).c_str(), getVar(addi.getRhs()).c_str());
+}
+
+void VectorBridge::emitVectorBroadcast(mlir::Operation* op) {
+    auto bc = mlir::cast<mlir::vector::BroadcastOp>(op);
+    auto vecType = mlir::cast<mlir::VectorType>(bc.getType());
+    int vlen = vecType.getShape()[0];
+    std::string var = newVar();
+    setVar(bc.getResult(), var);
+    fprintf(out_, "  vfloat32m1_t %s = __riscv_vfmv_v_f_f32m1(%s, %d);\n",
+        var.c_str(), getVar(bc.getSource()).c_str(), vlen);
+}
+
 void VectorBridge::emitMemrefDim(mlir::Operation* op) {
     auto dimOp = mlir::cast<mlir::memref::DimOp>(op);
     mlir::Value src = dimOp.getSource();

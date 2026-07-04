@@ -27,13 +27,17 @@ private:
     void setDim(mlir::Value memref, int idx, const std::string& name);
     std::string getDimExpr(mlir::Value memref, int idx); // static shape -> literal; dynamic -> looked-up var
     void collectDynamicDims(mlir::Operation* root);       // pre-pass over the whole func
+    std::string computeFlatOffset(mlir::Value memref, mlir::Operation::operand_range indices);
 
     void emitOp(mlir::Operation* op);
     void emitTransferRead(mlir::Operation* op);
     void emitTransferWrite(mlir::Operation* op);
     void emitVectorMulf(mlir::Operation* op);
     void emitVectorAddf(mlir::Operation* op);
+    void emitVectorBroadcast(mlir::Operation* op);
     void emitAffineFor(mlir::Operation* op);
     void emitConstant(mlir::Operation* op);
+    void emitSubI(mlir::Operation* op);
+    void emitAddI(mlir::Operation* op);
     void emitMemrefDim(mlir::Operation* op);
 };
