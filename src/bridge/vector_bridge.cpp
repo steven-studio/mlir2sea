@@ -130,6 +130,12 @@ void VectorBridge::emitOp(mlir::Operation* op) {
     } else if (auto addf = mlir::dyn_cast<mlir::arith::AddFOp>(op)) {
         if (mlir::isa<mlir::VectorType>(addf.getType()))
             emitVectorAddf(op);
+    } else if (auto subf = mlir::dyn_cast<mlir::arith::SubFOp>(op)) {
+        if (mlir::isa<mlir::VectorType>(subf.getType()))
+            emitVectorSubf(op);
+    } else if (auto divf = mlir::dyn_cast<mlir::arith::DivFOp>(op)) {
+        if (mlir::isa<mlir::VectorType>(divf.getType()))
+            emitVectorDivf(op);
     } else if (mlir::isa<mlir::arith::SubIOp>(op)) {
         emitSubI(op);
     } else if (mlir::isa<mlir::arith::AddIOp>(op)) {
@@ -232,6 +238,28 @@ void VectorBridge::emitVectorAddf(mlir::Operation* op) {
     setVar(addf.getResult(), var);
     fprintf(out_, "  vfloat32m1_t %s = __riscv_vfadd_vv_f32m1(%s, %s, %s);\n",
         var.c_str(), getVar(addf.getLhs()).c_str(), getVar(addf.getRhs()).c_str(), computeVL(vlen).c_str());
+}
+
+void VectorBridge::emitVectorSubf(mlir::Operation* op) {
+    auto subf = mlir::cast<mlir::arith::SubFOp>(op);
+    auto vecType = mlir::cast<mlir::VectorType>(subf.getType());
+    int vlen = vecType.getShape()[0];
+    std::string var = newVar();
+    setVar(subf.getResult(), var);
+    fprintf(out_, "  vfloat32m1_t %s = __riscv_vfsub_vv_f32m1(%s, %s, %s);\n",
+        var.c_str(), getVar(subf.getLhs()).c_str(), getVar(subf.getRhs()).c_str(),
+        computeVL(vlen).c_str());
+}
+
+void VectorBridge::emitVectorDivf(mlir::Operation* op) {
+    auto divf = mlir::cast<mlir::arith::DivFOp>(op);
+    auto vecType = mlir::cast<mlir::VectorType>(divf.getType());
+    int vlen = vecType.getShape()[0];
+    std::string var = newVar();
+    setVar(divf.getResult(), var);
+    fprintf(out_, "  vfloat32m1_t %s = __riscv_vfdiv_vv_f32m1(%s, %s, %s);\n",
+        var.c_str(), getVar(divf.getLhs()).c_str(), getVar(divf.getRhs()).c_str(),
+        computeVL(vlen).c_str());
 }
 
 void VectorBridge::emitConstant(mlir::Operation* op) {

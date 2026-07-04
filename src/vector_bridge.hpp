@@ -37,6 +37,8 @@ private:
     void emitTransferWrite(mlir::Operation* op);
     void emitVectorMulf(mlir::Operation* op);
     void emitVectorAddf(mlir::Operation* op);
+    void emitVectorSubf(mlir::Operation* op);
+    void emitVectorDivf(mlir::Operation* op);
     void emitVectorBroadcast(mlir::Operation* op);
     void emitAffineFor(mlir::Operation* op);
     void emitConstant(mlir::Operation* op);
