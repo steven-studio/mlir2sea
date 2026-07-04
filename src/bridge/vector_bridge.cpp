@@ -141,6 +141,8 @@ void VectorBridge::emitFunc(mlir::func::FuncOp func) {
 void VectorBridge::emitOp(mlir::Operation* op) {
     if (auto forOp = mlir::dyn_cast<mlir::affine::AffineForOp>(op)) {
         emitAffineFor(op);
+    } else if (mlir::isa<mlir::affine::AffineApplyOp>(op)) {
+        emitAffineApply(op);
     } else if (mlir::isa<mlir::vector::TransferReadOp>(op)) {
         emitTransferRead(op);
     } else if (mlir::isa<mlir::vector::TransferWriteOp>(op)) {
@@ -200,6 +202,57 @@ void VectorBridge::emitAffineFor(mlir::Operation* op) {
     loop_stack_.pop_back();
 
     fprintf(out_, "  }\n");
+}
+
+std::string VectorBridge::affineExprToStr(mlir::AffineExpr expr,
+                                           const std::vector<std::string>& dimVars,
+                                           const std::vector<std::string>& symVars) {
+    if (auto dim = mlir::dyn_cast<mlir::AffineDimExpr>(expr)) {
+        return dimVars[dim.getPosition()];
+    }
+    if (auto sym = mlir::dyn_cast<mlir::AffineSymbolExpr>(expr)) {
+        return symVars[sym.getPosition()];
+    }
+    if (auto cst = mlir::dyn_cast<mlir::AffineConstantExpr>(expr)) {
+        return std::to_string(cst.getValue());
+    }
+    if (auto bin = mlir::dyn_cast<mlir::AffineBinaryOpExpr>(expr)) {
+        std::string lhs = affineExprToStr(bin.getLHS(), dimVars, symVars);
+        std::string rhs = affineExprToStr(bin.getRHS(), dimVars, symVars);
+        switch (bin.getKind()) {
+            case mlir::AffineExprKind::Add:
+                return "(" + lhs + " + " + rhs + ")";
+            case mlir::AffineExprKind::Mul:
+                return "(" + lhs + " * " + rhs + ")";
+            case mlir::AffineExprKind::Mod:
+                return "(" + lhs + " % " + rhs + ")";
+            case mlir::AffineExprKind::FloorDiv:
+                return "(" + lhs + " / " + rhs + ")"; // 注意：對負數語意跟 C 的 / 不同，先不處理
+            case mlir::AffineExprKind::CeilDiv:
+                return "((" + lhs + " + " + rhs + " - 1) / " + rhs + ")";
+            default:
+                return "/*UNSUPPORTED_AFFINE_BINOP*/0";
+        }
+    }
+    return "/*UNSUPPORTED_AFFINE_EXPR*/0";
+}
+
+void VectorBridge::emitAffineApply(mlir::Operation* op) {
+    auto applyOp = mlir::cast<mlir::affine::AffineApplyOp>(op);
+    auto map = applyOp.getAffineMap();
+    auto operands = applyOp.getMapOperands();
+
+    std::vector<std::string> dimVars, symVars;
+    unsigned numDims = map.getNumDims();
+    for (unsigned i = 0; i < numDims; ++i)
+        dimVars.push_back(getVar(operands[i]));
+    for (unsigned i = numDims; i < operands.size(); ++i)
+        symVars.push_back(getVar(operands[i]));
+
+    std::string expr = affineExprToStr(map.getResult(0), dimVars, symVars);
+    std::string var = newVar();
+    setVar(applyOp.getResult(), var);
+    fprintf(out_, "  int %s = %s;\n", var.c_str(), expr.c_str());
 }
 
 void VectorBridge::emitTransferRead(mlir::Operation* op) {

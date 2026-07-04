@@ -38,6 +38,9 @@ private:
     void collectDynamicDims(mlir::Operation* root);
     std::string computeFlatOffset(mlir::Value memref, mlir::Operation::operand_range indices);
     std::string computeVL(int vlen); // 算這次迭代實際該用的向量長度（處理非對齊邊界）
+    std::string affineExprToStr(mlir::AffineExpr expr,
+                            const std::vector<std::string>& dimVars,
+                            const std::vector<std::string>& symVars);
     VecTypeInfo getVecTypeInfo(mlir::Type elemType, int vlen);
     std::string getScalarCType(mlir::Type memrefElemType); // for function signature (float*/double*)
     
@@ -50,6 +53,7 @@ private:
     void emitVectorDivf(mlir::Operation* op);
     void emitVectorBroadcast(mlir::Operation* op);
     void emitAffineFor(mlir::Operation* op);
+    void emitAffineApply(mlir::Operation* op);
     void emitConstant(mlir::Operation* op);
     void emitSubI(mlir::Operation* op);
     void emitAddI(mlir::Operation* op);
