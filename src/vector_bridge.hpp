@@ -38,6 +38,7 @@ private:
     void collectDynamicDims(mlir::Operation* root);
     std::string computeFlatOffset(mlir::Value memref, mlir::Operation::operand_range indices);
     std::string computeVL(int vlen); // 算這次迭代實際該用的向量長度（處理非對齊邊界）
+    std::string computeSafeVL(mlir::Value memref, mlir::Value lastIndexValue, int vlen); // per-memref clipped vl for vle/vse only
     std::string affineExprToStr(mlir::AffineExpr expr,
                             const std::vector<std::string>& dimVars,
                             const std::vector<std::string>& symVars);

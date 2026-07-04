@@ -87,6 +87,16 @@ std::string VectorBridge::computeVL(int vlen) {
     return std::to_string(vlen);
 }
 
+std::string VectorBridge::computeSafeVL(mlir::Value memref, mlir::Value lastIndexValue, int vlen) {
+    std::string loopVL = computeVL(vlen);
+    auto memType = mlir::cast<mlir::MemRefType>(memref.getType());
+    int rank = memType.getRank();
+    std::string dimSize = getDimExpr(memref, rank - 1); // 假設向量化的維度是最內層
+    std::string idxVar = getVar(lastIndexValue);
+    std::string remaining = "(" + dimSize + " - " + idxVar + ")";
+    return "(" + loopVL + " < " + remaining + " ? " + loopVL + " : " + remaining + ")";
+}
+
 VecTypeInfo VectorBridge::getVecTypeInfo(mlir::Type elemType, int vlen) {
     bool isF64 = elemType.isF64();
     int elemBits = isF64 ? 64 : 32;
@@ -280,9 +290,10 @@ void VectorBridge::emitTransferRead(mlir::Operation* op) {
             tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
             var.c_str(), computeVL(vlen).c_str());
     } else {
+        std::string vl = computeSafeVL(readOp.getSource(), indices.back(), vlen);
         fprintf(out_, "  %s %s = __riscv_vle%s_v_%s(%s + %s, %s);\n",
             tinfo.vecCType.c_str(), var.c_str(), tinfo.bitwidth.c_str(), tinfo.suffix.c_str(),
-            base.c_str(), offset.c_str(), computeVL(vlen).c_str());
+            base.c_str(), offset.c_str(), vl.c_str());
     }
 }
 
@@ -290,13 +301,15 @@ void VectorBridge::emitTransferWrite(mlir::Operation* op) {
     auto writeOp = mlir::cast<mlir::vector::TransferWriteOp>(op);
     auto vecType = mlir::cast<mlir::VectorType>(writeOp.getVector().getType());
     int vlen = vecType.getShape()[0];
-    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    std::string vec = getVar(writeOp.getVector());
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);
+    std::string vec = getVar(writeOp.getVector());
     std::string base = getVar(writeOp.getSource());
     auto indices = writeOp.getIndices();
     std::string offset = computeFlatOffset(writeOp.getSource(), indices);
+    std::string vl = computeSafeVL(writeOp.getSource(), indices.back(), vlen);
     fprintf(out_, "  __riscv_vse%s_v_%s(%s + %s, %s, %s);\n",
         tinfo.bitwidth.c_str(), tinfo.suffix.c_str(),
-        base.c_str(), offset.c_str(), vec.c_str(), computeVL(vlen).c_str());
+        base.c_str(), offset.c_str(), vec.c_str(), vl.c_str());
 }
 
 void VectorBridge::emitVectorMulf(mlir::Operation* op) {
