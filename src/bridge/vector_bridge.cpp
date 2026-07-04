@@ -87,6 +87,27 @@ std::string VectorBridge::computeVL(int vlen) {
     return std::to_string(vlen);
 }
 
+VecTypeInfo VectorBridge::getVecTypeInfo(mlir::Type elemType, int vlen) {
+    bool isF64 = elemType.isF64();
+    int elemBits = isF64 ? 64 : 32;
+    int totalBits = elemBits * vlen;
+    int lmul = (totalBits + 127) / 128; // 假設 VLEN=128，無條件進位算需要幾組暫存器
+    if (lmul < 1) lmul = 1;
+    // 只支援 m1/m2/m4/m8（RVV 合法的 LMUL 值），這裡簡單處理到 m8
+    std::string lmulTag = "m" + std::to_string(lmul);
+    std::string elemTag = isF64 ? "f64" : "f32";
+    std::string bitwidth = isF64 ? "64" : "32";
+    std::string scalarCType = isF64 ? "double" : "float";
+    std::string fullElemName = isF64 ? "float64" : "float32";
+    std::string vecCType = "v" + fullElemName + lmulTag + "_t";
+    std::string suffix = elemTag + lmulTag;
+    return {vecCType, bitwidth, suffix, scalarCType};
+}
+
+std::string VectorBridge::getScalarCType(mlir::Type memrefElemType) {
+    return memrefElemType.isF64() ? "double" : "float";
+}
+
 void VectorBridge::emitFunc(mlir::func::FuncOp func) {
     fprintf(out_, "#include <riscv_vector.h>\n\n");
 
@@ -99,7 +120,9 @@ void VectorBridge::emitFunc(mlir::func::FuncOp func) {
         first = false;
         auto name = "p" + std::to_string(arg.getArgNumber());
         setVar(arg, name);
-        fprintf(out_, "float* %s", name.c_str());
+        auto memType = mlir::dyn_cast<mlir::MemRefType>(arg.getType());
+        std::string cType = memType ? getScalarCType(memType.getElementType()) : "float";
+        fprintf(out_, "%s* %s", cType.c_str(), name.c_str());
     }
     for (auto arg : func.getArguments()) {
         auto it = dim_map_.find(arg.getAsOpaquePointer());
@@ -183,7 +206,7 @@ void VectorBridge::emitTransferRead(mlir::Operation* op) {
     auto readOp = mlir::cast<mlir::vector::TransferReadOp>(op);
     auto vecType = mlir::cast<mlir::VectorType>(readOp.getType());
     int vlen = vecType.getShape()[0];
-    std::string var = newVar();
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    std::string var = newVar();
     setVar(readOp.getResult(), var);
     std::string base = getVar(readOp.getSource());
     auto indices = readOp.getIndices();
@@ -198,13 +221,15 @@ void VectorBridge::emitTransferRead(mlir::Operation* op) {
     }
 
     if (isBroadcast) {
-        fprintf(out_, "  float %s_scalar = %s[%s];\n",
-            var.c_str(), base.c_str(), offset.c_str());
-        fprintf(out_, "  vfloat32m1_t %s = __riscv_vfmv_v_f_f32m1(%s_scalar, %s);\n",
-            var.c_str(), var.c_str(), computeVL(vlen).c_str());
+        fprintf(out_, "  %s %s_scalar = %s[%s];\n",
+            tinfo.scalarCType.c_str(), var.c_str(), base.c_str(), offset.c_str());
+        fprintf(out_, "  %s %s = __riscv_vfmv_v_f_%s(%s_scalar, %s);\n",
+            tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
+            var.c_str(), computeVL(vlen).c_str());
     } else {
-        fprintf(out_, "  vfloat32m1_t %s = __riscv_vle32_v_f32m1(%s + %s, %s);\n",
-            var.c_str(), base.c_str(), offset.c_str(), computeVL(vlen).c_str());
+        fprintf(out_, "  %s %s = __riscv_vle%s_v_%s(%s + %s, %s);\n",
+            tinfo.vecCType.c_str(), var.c_str(), tinfo.bitwidth.c_str(), tinfo.suffix.c_str(),
+            base.c_str(), offset.c_str(), computeVL(vlen).c_str());
     }
 }
 
@@ -212,11 +237,12 @@ void VectorBridge::emitTransferWrite(mlir::Operation* op) {
     auto writeOp = mlir::cast<mlir::vector::TransferWriteOp>(op);
     auto vecType = mlir::cast<mlir::VectorType>(writeOp.getVector().getType());
     int vlen = vecType.getShape()[0];
-    std::string vec = getVar(writeOp.getVector());
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    std::string vec = getVar(writeOp.getVector());
     std::string base = getVar(writeOp.getSource());
     auto indices = writeOp.getIndices();
     std::string offset = computeFlatOffset(writeOp.getSource(), indices);
-    fprintf(out_, "  __riscv_vse32_v_f32m1(%s + %s, %s, %s);\n",
+    fprintf(out_, "  __riscv_vse%s_v_%s(%s + %s, %s, %s);\n",
+        tinfo.bitwidth.c_str(), tinfo.suffix.c_str(),
         base.c_str(), offset.c_str(), vec.c_str(), computeVL(vlen).c_str());
 }
 
@@ -224,30 +250,33 @@ void VectorBridge::emitVectorMulf(mlir::Operation* op) {
     auto mulf = mlir::cast<mlir::arith::MulFOp>(op);
     auto vecType = mlir::cast<mlir::VectorType>(mulf.getType());
     int vlen = vecType.getShape()[0];
-    std::string var = newVar();
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    std::string var = newVar();
     setVar(mulf.getResult(), var);
-    fprintf(out_, "  vfloat32m1_t %s = __riscv_vfmul_vv_f32m1(%s, %s, %s);\n",
-        var.c_str(), getVar(mulf.getLhs()).c_str(), getVar(mulf.getRhs()).c_str(), computeVL(vlen).c_str());
+    fprintf(out_, "  %s %s = __riscv_vfmul_vv_%s(%s, %s, %s);\n",
+        tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
+        getVar(mulf.getLhs()).c_str(), getVar(mulf.getRhs()).c_str(), computeVL(vlen).c_str());
 }
 
 void VectorBridge::emitVectorAddf(mlir::Operation* op) {
     auto addf = mlir::cast<mlir::arith::AddFOp>(op);
     auto vecType = mlir::cast<mlir::VectorType>(addf.getType());
     int vlen = vecType.getShape()[0];
-    std::string var = newVar();
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    std::string var = newVar();
     setVar(addf.getResult(), var);
-    fprintf(out_, "  vfloat32m1_t %s = __riscv_vfadd_vv_f32m1(%s, %s, %s);\n",
-        var.c_str(), getVar(addf.getLhs()).c_str(), getVar(addf.getRhs()).c_str(), computeVL(vlen).c_str());
+    fprintf(out_, "  %s %s = __riscv_vfadd_vv_%s(%s, %s, %s);\n",
+        tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
+        getVar(addf.getLhs()).c_str(), getVar(addf.getRhs()).c_str(), computeVL(vlen).c_str());
 }
 
 void VectorBridge::emitVectorSubf(mlir::Operation* op) {
     auto subf = mlir::cast<mlir::arith::SubFOp>(op);
     auto vecType = mlir::cast<mlir::VectorType>(subf.getType());
     int vlen = vecType.getShape()[0];
-    std::string var = newVar();
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    std::string var = newVar();
     setVar(subf.getResult(), var);
-    fprintf(out_, "  vfloat32m1_t %s = __riscv_vfsub_vv_f32m1(%s, %s, %s);\n",
-        var.c_str(), getVar(subf.getLhs()).c_str(), getVar(subf.getRhs()).c_str(),
+    fprintf(out_, "  %s %s = __riscv_vfsub_vv_%s(%s, %s, %s);\n",
+        tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
+        getVar(subf.getLhs()).c_str(), getVar(subf.getRhs()).c_str(),
         computeVL(vlen).c_str());
 }
 
@@ -255,10 +284,11 @@ void VectorBridge::emitVectorDivf(mlir::Operation* op) {
     auto divf = mlir::cast<mlir::arith::DivFOp>(op);
     auto vecType = mlir::cast<mlir::VectorType>(divf.getType());
     int vlen = vecType.getShape()[0];
-    std::string var = newVar();
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    std::string var = newVar();
     setVar(divf.getResult(), var);
-    fprintf(out_, "  vfloat32m1_t %s = __riscv_vfdiv_vv_f32m1(%s, %s, %s);\n",
-        var.c_str(), getVar(divf.getLhs()).c_str(), getVar(divf.getRhs()).c_str(),
+    fprintf(out_, "  %s %s = __riscv_vfdiv_vv_%s(%s, %s, %s);\n",
+        tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
+        getVar(divf.getLhs()).c_str(), getVar(divf.getRhs()).c_str(),
         computeVL(vlen).c_str());
 }
 
@@ -271,7 +301,8 @@ void VectorBridge::emitConstant(mlir::Operation* op) {
     } else if (auto fAttr = mlir::dyn_cast<mlir::FloatAttr>(cst.getValue())) {
         std::string var = newVar();
         setVar(cst.getResult(), var);
-        fprintf(out_, "  float %s = %g;\n", var.c_str(), fAttr.getValueAsDouble());
+        std::string cType = fAttr.getType().isF64() ? "double" : "float";
+        fprintf(out_, "  %s %s = %g;\n", cType.c_str(), var.c_str(), fAttr.getValueAsDouble());
     }
 }
 
@@ -295,10 +326,11 @@ void VectorBridge::emitVectorBroadcast(mlir::Operation* op) {
     auto bc = mlir::cast<mlir::vector::BroadcastOp>(op);
     auto vecType = mlir::cast<mlir::VectorType>(bc.getType());
     int vlen = vecType.getShape()[0];
-    std::string var = newVar();
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    std::string var = newVar();
     setVar(bc.getResult(), var);
-    fprintf(out_, "  vfloat32m1_t %s = __riscv_vfmv_v_f_f32m1(%s, %s);\n",
-        var.c_str(), getVar(bc.getSource()).c_str(), computeVL(vlen).c_str());
+    fprintf(out_, "  %s %s = __riscv_vfmv_v_f_%s(%s, %s);\n",
+        tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
+        getVar(bc.getSource()).c_str(), computeVL(vlen).c_str());
 }
 
 void VectorBridge::emitMemrefDim(mlir::Operation* op) {

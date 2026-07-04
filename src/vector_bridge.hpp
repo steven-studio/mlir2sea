@@ -9,6 +9,13 @@
 
 struct LoopCtx { std::string iv; std::string hi; long step; };
 
+struct VecTypeInfo {
+    std::string vecCType;   // "vfloat32m1_t" or "vfloat64m1_t"
+    std::string bitwidth;   // "32" or "64"  (used in vle32/vle64, vse32/vse64)
+    std::string suffix;     // "f32m1" or "f64m1" (used in vfmul_vv_f32m1 etc.)
+    std::string scalarCType; // "float" or "double"
+};
+
 class VectorBridge {
 public:
     VectorBridge(FILE* out) : out_(out) {}
@@ -31,7 +38,9 @@ private:
     void collectDynamicDims(mlir::Operation* root);
     std::string computeFlatOffset(mlir::Value memref, mlir::Operation::operand_range indices);
     std::string computeVL(int vlen); // 算這次迭代實際該用的向量長度（處理非對齊邊界）
-
+    VecTypeInfo getVecTypeInfo(mlir::Type elemType, int vlen);
+    std::string getScalarCType(mlir::Type memrefElemType); // for function signature (float*/double*)
+    
     void emitOp(mlir::Operation* op);
     void emitTransferRead(mlir::Operation* op);
     void emitTransferWrite(mlir::Operation* op);
