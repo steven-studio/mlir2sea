@@ -75,6 +75,18 @@ std::string VectorBridge::computeFlatOffset(mlir::Value memref, mlir::Operation:
     return offset.empty() ? "0" : offset;
 }
 
+std::string VectorBridge::computeVL(int vlen) {
+    // 由內而外找第一個 step 等於 vlen 的迴圈，代表這是向量維度的那一層
+    for (auto it = loop_stack_.rbegin(); it != loop_stack_.rend(); ++it) {
+        if (it->step == vlen) {
+            return "(" + it->iv + " + " + std::to_string(vlen) + " <= " + it->hi +
+                   " ? " + std::to_string(vlen) + " : (" + it->hi + " - " + it->iv + "))";
+        }
+    }
+    // 找不到對應迴圈（理論上不該發生），退回寫死的 vlen，至少行為跟原本一樣
+    return std::to_string(vlen);
+}
+
 void VectorBridge::emitFunc(mlir::func::FuncOp func) {
     fprintf(out_, "#include <riscv_vector.h>\n\n");
 
@@ -150,9 +162,14 @@ void VectorBridge::emitAffineFor(mlir::Operation* op) {
         hi = !ops.empty() ? getVar(ops[0]) : "/*UNSUPPORTED_UB*/0";
     }
 
+    long step = forOp.getStepAsInt();
     fprintf(out_, "  for (int %s = %s; %s < %s; %s += %ld) {\n",
-        iv.c_str(), lo.c_str(), iv.c_str(), hi.c_str(), iv.c_str(), forOp.getStepAsInt());
+        iv.c_str(), lo.c_str(), iv.c_str(), hi.c_str(), iv.c_str(), step);
+
+    loop_stack_.push_back({iv, hi, step});
     for (auto& nested : forOp.getBody()->without_terminator()) emitOp(&nested);
+    loop_stack_.pop_back();
+
     fprintf(out_, "  }\n");
 }
 
@@ -177,11 +194,11 @@ void VectorBridge::emitTransferRead(mlir::Operation* op) {
     if (isBroadcast) {
         fprintf(out_, "  float %s_scalar = %s[%s];\n",
             var.c_str(), base.c_str(), offset.c_str());
-        fprintf(out_, "  vfloat32m1_t %s = __riscv_vfmv_v_f_f32m1(%s_scalar, %d);\n",
-            var.c_str(), var.c_str(), vlen);
+        fprintf(out_, "  vfloat32m1_t %s = __riscv_vfmv_v_f_f32m1(%s_scalar, %s);\n",
+            var.c_str(), var.c_str(), computeVL(vlen).c_str());
     } else {
-        fprintf(out_, "  vfloat32m1_t %s = __riscv_vle32_v_f32m1(%s + %s, %d);\n",
-            var.c_str(), base.c_str(), offset.c_str(), vlen);
+        fprintf(out_, "  vfloat32m1_t %s = __riscv_vle32_v_f32m1(%s + %s, %s);\n",
+            var.c_str(), base.c_str(), offset.c_str(), computeVL(vlen).c_str());
     }
 }
 
@@ -193,8 +210,8 @@ void VectorBridge::emitTransferWrite(mlir::Operation* op) {
     std::string base = getVar(writeOp.getSource());
     auto indices = writeOp.getIndices();
     std::string offset = computeFlatOffset(writeOp.getSource(), indices);
-    fprintf(out_, "  __riscv_vse32_v_f32m1(%s + %s, %s, %d);\n",
-        base.c_str(), offset.c_str(), vec.c_str(), vlen);
+    fprintf(out_, "  __riscv_vse32_v_f32m1(%s + %s, %s, %s);\n",
+        base.c_str(), offset.c_str(), vec.c_str(), computeVL(vlen).c_str());
 }
 
 void VectorBridge::emitVectorMulf(mlir::Operation* op) {
@@ -203,8 +220,8 @@ void VectorBridge::emitVectorMulf(mlir::Operation* op) {
     int vlen = vecType.getShape()[0];
     std::string var = newVar();
     setVar(mulf.getResult(), var);
-    fprintf(out_, "  vfloat32m1_t %s = __riscv_vfmul_vv_f32m1(%s, %s, %d);\n",
-        var.c_str(), getVar(mulf.getLhs()).c_str(), getVar(mulf.getRhs()).c_str(), vlen);
+    fprintf(out_, "  vfloat32m1_t %s = __riscv_vfmul_vv_f32m1(%s, %s, %s);\n",
+        var.c_str(), getVar(mulf.getLhs()).c_str(), getVar(mulf.getRhs()).c_str(), computeVL(vlen).c_str());
 }
 
 void VectorBridge::emitVectorAddf(mlir::Operation* op) {
@@ -213,8 +230,8 @@ void VectorBridge::emitVectorAddf(mlir::Operation* op) {
     int vlen = vecType.getShape()[0];
     std::string var = newVar();
     setVar(addf.getResult(), var);
-    fprintf(out_, "  vfloat32m1_t %s = __riscv_vfadd_vv_f32m1(%s, %s, %d);\n",
-        var.c_str(), getVar(addf.getLhs()).c_str(), getVar(addf.getRhs()).c_str(), vlen);
+    fprintf(out_, "  vfloat32m1_t %s = __riscv_vfadd_vv_f32m1(%s, %s, %s);\n",
+        var.c_str(), getVar(addf.getLhs()).c_str(), getVar(addf.getRhs()).c_str(), computeVL(vlen).c_str());
 }
 
 void VectorBridge::emitConstant(mlir::Operation* op) {
@@ -252,8 +269,8 @@ void VectorBridge::emitVectorBroadcast(mlir::Operation* op) {
     int vlen = vecType.getShape()[0];
     std::string var = newVar();
     setVar(bc.getResult(), var);
-    fprintf(out_, "  vfloat32m1_t %s = __riscv_vfmv_v_f_f32m1(%s, %d);\n",
-        var.c_str(), getVar(bc.getSource()).c_str(), vlen);
+    fprintf(out_, "  vfloat32m1_t %s = __riscv_vfmv_v_f_f32m1(%s, %s);\n",
+        var.c_str(), getVar(bc.getSource()).c_str(), computeVL(vlen).c_str());
 }
 
 void VectorBridge::emitMemrefDim(mlir::Operation* op) {
