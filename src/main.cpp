@@ -7,6 +7,10 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Linalg/Passes.h"
+#include "mlir/Dialect/Affine/Passes.h"
+#include "mlir/Pass/PassManager.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "mlir_bridge.hpp"
@@ -21,9 +25,11 @@ int main(int argc, char* argv[]) {
 
     bool emitRISCV = false;
     bool emitRVV = false;
+    bool useLinalgPipeline = false;
     for (int i = 1; i < argc; i++) {
         if (std::string(argv[i]) == "--emit-riscv") emitRISCV = true;
         if (std::string(argv[i]) == "--emit-rvv") emitRVV = true;
+        if (std::string(argv[i]) == "--use-linalg-pipeline") useLinalgPipeline = true;
     }
 
     mlir::MLIRContext ctx;
@@ -34,6 +40,7 @@ int main(int argc, char* argv[]) {
     ctx.loadDialect<mlir::memref::MemRefDialect>();
     ctx.loadDialect<mlir::vector::VectorDialect>();
     ctx.loadDialect<mlir::affine::AffineDialect>();
+    ctx.loadDialect<mlir::linalg::LinalgDialect>();
 
     llvm::SourceMgr srcMgr;
     auto buf = llvm::MemoryBuffer::getFile(argv[1]);
@@ -44,6 +51,19 @@ int main(int argc, char* argv[]) {
         mlir::parseSourceFile<mlir::ModuleOp>(srcMgr, &ctx);
     if (!module) { std::cerr << "Parse failed\n"; return 1; }
 
+    if (useLinalgPipeline) {
+        mlir::PassManager pm(&ctx);
+        mlir::OpPassManager &funcPm = pm.nest<mlir::func::FuncOp>();
+        funcPm.addPass(mlir::createConvertLinalgToAffineLoopsPass());
+        mlir::affine::AffineVectorizeOptions vecOpts;
+        vecOpts.vectorSizes = {4};
+        funcPm.addPass(mlir::affine::createAffineVectorize(vecOpts));
+        if (mlir::failed(pm.run(*module))) {
+            std::cerr << "Pass pipeline failed\n";
+            return 1;
+        }
+    }
+    
     const char* outPath = emitRVV ? "/tmp/mlir2sea_rvv.c" : (emitRISCV ? "/tmp/mlir2sea_out.s" : "/tmp/mlir2sea_out.c");
     FILE* outFile = fopen(outPath, "w");
     if (!emitRISCV)
