@@ -190,6 +190,12 @@ void VectorBridge::emitOp(mlir::Operation* op) {
     } else if (auto divf = mlir::dyn_cast<mlir::arith::DivFOp>(op)) {
         if (mlir::isa<mlir::VectorType>(divf.getType()))
             emitVectorDivf(op);
+    } else if (auto maxf = mlir::dyn_cast<mlir::arith::MaximumFOp>(op)) {
+        if (mlir::isa<mlir::VectorType>(maxf.getType()))
+            emitVectorMaxf(op);
+    } else if (auto minf = mlir::dyn_cast<mlir::arith::MinimumFOp>(op)) {
+        if (mlir::isa<mlir::VectorType>(minf.getType()))
+            emitVectorMinf(op);
     } else if (mlir::isa<mlir::arith::SubIOp>(op)) {
         emitSubI(op);
     } else if (mlir::isa<mlir::arith::AddIOp>(op)) {
@@ -395,6 +401,30 @@ void VectorBridge::emitVectorDivf(mlir::Operation* op) {
         tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
         getVar(divf.getLhs()).c_str(), getVar(divf.getRhs()).c_str(),
         computeVL(vlen).c_str());
+}
+
+void VectorBridge::emitVectorMaxf(mlir::Operation* op) {
+    auto maxf = mlir::cast<mlir::arith::MaximumFOp>(op);
+    auto vecType = mlir::cast<mlir::VectorType>(maxf.getType());
+    int vlen = vecType.getShape()[0];
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);
+    std::string var = newVar();
+    setVar(maxf.getResult(), var);
+    fprintf(out_, "  %s %s = __riscv_vfmax_vv_%s(%s, %s, %s);\n",
+        tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
+        getVar(maxf.getLhs()).c_str(), getVar(maxf.getRhs()).c_str(), computeVL(vlen).c_str());
+}
+
+void VectorBridge::emitVectorMinf(mlir::Operation* op) {
+    auto minf = mlir::cast<mlir::arith::MinimumFOp>(op);
+    auto vecType = mlir::cast<mlir::VectorType>(minf.getType());
+    int vlen = vecType.getShape()[0];
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);
+    std::string var = newVar();
+    setVar(minf.getResult(), var);
+    fprintf(out_, "  %s %s = __riscv_vfmin_vv_%s(%s, %s, %s);\n",
+        tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
+        getVar(minf.getLhs()).c_str(), getVar(minf.getRhs()).c_str(), computeVL(vlen).c_str());
 }
 
 void VectorBridge::emitConstant(mlir::Operation* op) {
