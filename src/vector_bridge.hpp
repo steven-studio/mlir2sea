@@ -57,6 +57,7 @@ private:
     void emitVectorDivf(mlir::Operation* op);
     void emitVectorMaxf(mlir::Operation* op);
     void emitVectorMinf(mlir::Operation* op);
+    void emitVectorSqrt(mlir::Operation* op);
     void emitVectorCmpf(mlir::Operation* op);
     void emitVectorSelect(mlir::Operation* op);
     void emitVectorReduction(mlir::Operation* op);

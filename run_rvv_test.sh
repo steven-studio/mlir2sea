@@ -36,7 +36,7 @@ cp /tmp/mlir2sea_rvv.c "$KERNEL_C"
 echo "=== [$KERNEL] Compiling kernel + harness for RISC-V ==="
 riscv64-linux-gnu-gcc -static -march=rv64gcv -O2 -c "$KERNEL_C" -o "/tmp/${KERNEL}_kernel.o"
 riscv64-linux-gnu-gcc -static -O2 -c "$HARNESS_FILE" -o "/tmp/${KERNEL}_harness.o"
-riscv64-linux-gnu-gcc -static "/tmp/${KERNEL}_kernel.o" "/tmp/${KERNEL}_harness.o" -o "/tmp/${KERNEL}_test"
+riscv64-linux-gnu-gcc -static "/tmp/${KERNEL}_kernel.o" "/tmp/${KERNEL}_harness.o" -lm -o "/tmp/${KERNEL}_test"
 
 echo "=== [$KERNEL] Running under QEMU ==="
 qemu-riscv64 "/tmp/${KERNEL}_test"

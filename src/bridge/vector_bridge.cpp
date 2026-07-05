@@ -2,6 +2,7 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include <stdexcept>
@@ -206,6 +207,9 @@ void VectorBridge::emitOp(mlir::Operation* op) {
     } else if (auto minf = mlir::dyn_cast<mlir::arith::MinimumFOp>(op)) {
         if (mlir::isa<mlir::VectorType>(minf.getType()))
             emitVectorMinf(op);
+    } else if (auto sqrtOp = mlir::dyn_cast<mlir::math::SqrtOp>(op)) {
+        if (mlir::isa<mlir::VectorType>(sqrtOp.getType()))
+            emitVectorSqrt(op);
     } else if (auto cmpf = mlir::dyn_cast<mlir::arith::CmpFOp>(op)) {
         if (mlir::isa<mlir::VectorType>(cmpf.getLhs().getType()))
             emitVectorCmpf(op);
@@ -454,6 +458,18 @@ void VectorBridge::emitVectorMinf(mlir::Operation* op) {
     fprintf(out_, "  %s %s = __riscv_vfmin_vv_%s(%s, %s, %s);\n",
         tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
         getVar(minf.getLhs()).c_str(), getVar(minf.getRhs()).c_str(), computeVL(vlen).c_str());
+}
+
+void VectorBridge::emitVectorSqrt(mlir::Operation* op) {
+    auto sqrtOp = mlir::cast<mlir::math::SqrtOp>(op);
+    auto vecType = mlir::cast<mlir::VectorType>(sqrtOp.getType());
+    int vlen = vecType.getShape()[0];
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);
+    std::string var = newVar();
+    setVar(sqrtOp.getResult(), var);
+    fprintf(out_, "  %s %s = __riscv_vfsqrt_v_%s(%s, %s);\n",
+        tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
+        getVar(sqrtOp.getOperand()).c_str(), computeVL(vlen).c_str());
 }
 
 void VectorBridge::emitVectorCmpf(mlir::Operation* op) {
