@@ -95,6 +95,11 @@ std::string VectorBridge::getPhysicalStride(mlir::Value memref, int dim) {
 }
 
 std::string VectorBridge::computeVL(int vlen) {
+    // vlen==1 沒有 tail 的概念（不存在「剩不到 1 個」這種情況），
+    // 直接回傳字面值，避免跟任何 step==1 的外層純量迴圈產生數值巧合誤判。
+    if (vlen == 1) {
+        return "1";
+    }
     // 由內而外找第一個 step 等於 vlen 的迴圈，代表這是向量維度的那一層
     for (auto it = loop_stack_.rbegin(); it != loop_stack_.rend(); ++it) {
         if (it->step == vlen) {
