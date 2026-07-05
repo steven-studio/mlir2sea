@@ -192,6 +192,8 @@ void VectorBridge::emitOp(mlir::Operation* op) {
     } else if (auto addf = mlir::dyn_cast<mlir::arith::AddFOp>(op)) {
         if (mlir::isa<mlir::VectorType>(addf.getType()))
             emitVectorAddf(op);
+        else
+            emitScalarAddf(op);
     } else if (auto subf = mlir::dyn_cast<mlir::arith::SubFOp>(op)) {
         if (mlir::isa<mlir::VectorType>(subf.getType()))
             emitVectorSubf(op);
@@ -393,6 +395,15 @@ void VectorBridge::emitVectorAddf(mlir::Operation* op) {
     fprintf(out_, "  %s %s = __riscv_vfadd_vv_%s(%s, %s, %s);\n",
         tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
         getVar(addf.getLhs()).c_str(), getVar(addf.getRhs()).c_str(), computeVL(vlen).c_str());
+}
+
+void VectorBridge::emitScalarAddf(mlir::Operation* op) {
+    auto addf = mlir::cast<mlir::arith::AddFOp>(op);
+    std::string cType = addf.getType().isF64() ? "double" : "float";
+    std::string var = newVar();
+    setVar(addf.getResult(), var);
+    fprintf(out_, "  %s %s = %s + %s;\n", cType.c_str(), var.c_str(),
+        getVar(addf.getLhs()).c_str(), getVar(addf.getRhs()).c_str());
 }
 
 void VectorBridge::emitVectorSubf(mlir::Operation* op) {
