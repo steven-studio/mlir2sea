@@ -55,6 +55,7 @@ private:
     void emitVectorDivf(mlir::Operation* op);
     void emitVectorMaxf(mlir::Operation* op);
     void emitVectorMinf(mlir::Operation* op);
+    void emitVectorReduction(mlir::Operation* op);
     void emitVectorBroadcast(mlir::Operation* op);
     void emitAffineFor(mlir::Operation* op);
     void emitAffineApply(mlir::Operation* op);

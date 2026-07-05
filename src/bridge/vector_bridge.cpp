@@ -176,6 +176,8 @@ void VectorBridge::emitOp(mlir::Operation* op) {
         emitTransferRead(op);
     } else if (mlir::isa<mlir::vector::TransferWriteOp>(op)) {
         emitTransferWrite(op);
+    } else if (mlir::isa<mlir::vector::ReductionOp>(op)) {
+        emitVectorReduction(op);
     } else if (mlir::isa<mlir::vector::BroadcastOp>(op)) {
         emitVectorBroadcast(op);
     } else if (auto mulf = mlir::dyn_cast<mlir::arith::MulFOp>(op)) {
@@ -361,7 +363,8 @@ void VectorBridge::emitVectorMulf(mlir::Operation* op) {
     auto mulf = mlir::cast<mlir::arith::MulFOp>(op);
     auto vecType = mlir::cast<mlir::VectorType>(mulf.getType());
     int vlen = vecType.getShape()[0];
-    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    std::string var = newVar();
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    
+    std::string var = newVar();
     setVar(mulf.getResult(), var);
     fprintf(out_, "  %s %s = __riscv_vfmul_vv_%s(%s, %s, %s);\n",
         tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
@@ -372,7 +375,8 @@ void VectorBridge::emitVectorAddf(mlir::Operation* op) {
     auto addf = mlir::cast<mlir::arith::AddFOp>(op);
     auto vecType = mlir::cast<mlir::VectorType>(addf.getType());
     int vlen = vecType.getShape()[0];
-    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    std::string var = newVar();
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    
+    std::string var = newVar();
     setVar(addf.getResult(), var);
     fprintf(out_, "  %s %s = __riscv_vfadd_vv_%s(%s, %s, %s);\n",
         tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
@@ -383,7 +387,8 @@ void VectorBridge::emitVectorSubf(mlir::Operation* op) {
     auto subf = mlir::cast<mlir::arith::SubFOp>(op);
     auto vecType = mlir::cast<mlir::VectorType>(subf.getType());
     int vlen = vecType.getShape()[0];
-    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    std::string var = newVar();
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    
+    std::string var = newVar();
     setVar(subf.getResult(), var);
     fprintf(out_, "  %s %s = __riscv_vfsub_vv_%s(%s, %s, %s);\n",
         tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
@@ -395,7 +400,8 @@ void VectorBridge::emitVectorDivf(mlir::Operation* op) {
     auto divf = mlir::cast<mlir::arith::DivFOp>(op);
     auto vecType = mlir::cast<mlir::VectorType>(divf.getType());
     int vlen = vecType.getShape()[0];
-    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    std::string var = newVar();
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    
+    std::string var = newVar();
     setVar(divf.getResult(), var);
     fprintf(out_, "  %s %s = __riscv_vfdiv_vv_%s(%s, %s, %s);\n",
         tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
@@ -425,6 +431,55 @@ void VectorBridge::emitVectorMinf(mlir::Operation* op) {
     fprintf(out_, "  %s %s = __riscv_vfmin_vv_%s(%s, %s, %s);\n",
         tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
         getVar(minf.getLhs()).c_str(), getVar(minf.getRhs()).c_str(), computeVL(vlen).c_str());
+}
+
+void VectorBridge::emitVectorReduction(mlir::Operation* op) {
+    auto redOp = mlir::cast<mlir::vector::ReductionOp>(op);
+    auto vecType = mlir::cast<mlir::VectorType>(redOp.getVector().getType());
+    int vlen = vecType.getShape()[0];
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);
+    std::string srcVec = getVar(redOp.getVector());
+    std::string vl = computeVL(vlen);
+
+    std::string kind;
+    switch (redOp.getKind()) {
+        case mlir::vector::CombiningKind::ADD: kind = "osum"; break;
+        case mlir::vector::CombiningKind::MAXNUMF: kind = "max"; break;
+        case mlir::vector::CombiningKind::MINNUMF: kind = "min"; break;
+        default:
+            fprintf(out_, "  /*UNSUPPORTED_REDUCTION_KIND*/\n");
+            std::string var = newVar();
+            setVar(redOp.getResult(), var);
+            fprintf(out_, "  %s %s = 0;\n", tinfo.scalarCType.c_str(), var.c_str());
+            return;
+    }
+
+    // seed: RVV reduction 需要一個「初始值放在 lane 0」的 vector 當種子
+    std::string seedVar = newVar();
+    std::string seedVal = (kind == "osum") ? "0.0f" : srcVec + "_seed_placeholder";    // 對 max/min，用來源 vector 本身的第 0 個元素當種子最安全（避免引入額外的極值假設）
+    if (kind != "osum") {
+        fprintf(out_, "  %s %s_scalar0;\n", tinfo.scalarCType.c_str(), seedVar.c_str());
+        fprintf(out_, "  __riscv_vse%s_v_%s(&%s_scalar0, %s, 1);\n",
+            tinfo.bitwidth.c_str(), tinfo.suffix.c_str(), seedVar.c_str(), srcVec.c_str());
+        fprintf(out_, "  %s %s = __riscv_vfmv_v_f_%s(%s_scalar0, %s);\n",
+            tinfo.vecCType.c_str(), seedVar.c_str(), tinfo.suffix.c_str(), seedVar.c_str(), vl.c_str());
+    } else {
+        fprintf(out_, "  %s %s = __riscv_vfmv_v_f_%s(0.0f, %s);\n",
+            tinfo.vecCType.c_str(), seedVar.c_str(), tinfo.suffix.c_str(), vl.c_str());
+    }
+
+    std::string resultVec = newVar();
+    fprintf(out_, "  %s %s = __riscv_vfred%s_vs_%s_%s(%s, %s, %s);\n",
+        tinfo.vecCType.c_str(), resultVec.c_str(),
+        kind.c_str(), tinfo.suffix.c_str(), tinfo.suffix.c_str(),
+        srcVec.c_str(), seedVar.c_str(), vl.c_str());
+
+    std::string var = newVar();
+    setVar(redOp.getResult(), var);
+    std::string scalarTag = tinfo.scalarCType == "double" ? "f64" : "f32";
+    fprintf(out_, "  %s %s = __riscv_vfmv_f_s_%s_%s(%s);\n",
+        tinfo.scalarCType.c_str(), var.c_str(),
+        tinfo.suffix.c_str(), scalarTag.c_str(), resultVec.c_str());
 }
 
 void VectorBridge::emitConstant(mlir::Operation* op) {
@@ -461,7 +516,8 @@ void VectorBridge::emitVectorBroadcast(mlir::Operation* op) {
     auto bc = mlir::cast<mlir::vector::BroadcastOp>(op);
     auto vecType = mlir::cast<mlir::VectorType>(bc.getType());
     int vlen = vecType.getShape()[0];
-    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    std::string var = newVar();
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);    
+    std::string var = newVar();
     setVar(bc.getResult(), var);
     fprintf(out_, "  %s %s = __riscv_vfmv_v_f_%s(%s, %s);\n",
         tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
