@@ -120,9 +120,8 @@ VecTypeInfo VectorBridge::getVecTypeInfo(mlir::Type elemType, int vlen) {
     bool isF64 = elemType.isF64();
     int elemBits = isF64 ? 64 : 32;
     int totalBits = elemBits * vlen;
-    int lmul = (totalBits + 127) / 128; // 假設 VLEN=128，無條件進位算需要幾組暫存器
+    int lmul = (totalBits + 127) / 128;
     if (lmul < 1) lmul = 1;
-    // 只支援 m1/m2/m4/m8（RVV 合法的 LMUL 值），這裡簡單處理到 m8
     std::string lmulTag = "m" + std::to_string(lmul);
     std::string elemTag = isF64 ? "f64" : "f32";
     std::string bitwidth = isF64 ? "64" : "32";
@@ -130,7 +129,9 @@ VecTypeInfo VectorBridge::getVecTypeInfo(mlir::Type elemType, int vlen) {
     std::string fullElemName = isF64 ? "float64" : "float32";
     std::string vecCType = "v" + fullElemName + lmulTag + "_t";
     std::string suffix = elemTag + lmulTag;
-    return {vecCType, bitwidth, suffix, scalarCType};
+    int maskRatio = elemBits / lmul; // SEW/LMUL
+    std::string maskCType = "vbool" + std::to_string(maskRatio) + "_t";
+    return {vecCType, bitwidth, suffix, scalarCType, maskCType};
 }
 
 std::string VectorBridge::getScalarCType(mlir::Type memrefElemType) {
@@ -198,6 +199,12 @@ void VectorBridge::emitOp(mlir::Operation* op) {
     } else if (auto minf = mlir::dyn_cast<mlir::arith::MinimumFOp>(op)) {
         if (mlir::isa<mlir::VectorType>(minf.getType()))
             emitVectorMinf(op);
+    } else if (auto cmpf = mlir::dyn_cast<mlir::arith::CmpFOp>(op)) {
+        if (mlir::isa<mlir::VectorType>(cmpf.getLhs().getType()))
+            emitVectorCmpf(op);
+    } else if (auto selOp = mlir::dyn_cast<mlir::arith::SelectOp>(op)) {
+        if (mlir::isa<mlir::VectorType>(selOp.getResult().getType()))
+            emitVectorSelect(op);
     } else if (mlir::isa<mlir::arith::SubIOp>(op)) {
         emitSubI(op);
     } else if (mlir::isa<mlir::arith::AddIOp>(op)) {
@@ -431,6 +438,65 @@ void VectorBridge::emitVectorMinf(mlir::Operation* op) {
     fprintf(out_, "  %s %s = __riscv_vfmin_vv_%s(%s, %s, %s);\n",
         tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
         getVar(minf.getLhs()).c_str(), getVar(minf.getRhs()).c_str(), computeVL(vlen).c_str());
+}
+
+void VectorBridge::emitVectorCmpf(mlir::Operation* op) {
+    auto cmpf = mlir::cast<mlir::arith::CmpFOp>(op);
+    auto vecType = mlir::cast<mlir::VectorType>(cmpf.getLhs().getType());
+    int vlen = vecType.getShape()[0];
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);
+    std::string vl = computeVL(vlen);
+
+    std::string lhs = getVar(cmpf.getLhs());
+    std::string rhs = getVar(cmpf.getRhs());
+    std::string intrinsicOp;
+    bool swap = false;
+
+    switch (cmpf.getPredicate()) {
+        case mlir::arith::CmpFPredicate::OEQ: intrinsicOp = "vmfeq_vv"; break;
+        case mlir::arith::CmpFPredicate::ONE: intrinsicOp = "vmfne_vv"; break;
+        case mlir::arith::CmpFPredicate::OLT: intrinsicOp = "vmflt_vv"; break;
+        case mlir::arith::CmpFPredicate::OLE: intrinsicOp = "vmfle_vv"; break;
+        case mlir::arith::CmpFPredicate::OGT: intrinsicOp = "vmflt_vv"; swap = true; break; // a>b == b
+        case mlir::arith::CmpFPredicate::OGE: intrinsicOp = "vmfle_vv"; swap = true; break; // a>=b == b<=a
+        default:
+            fprintf(out_, "  /*UNSUPPORTED_CMPF_PREDICATE*/\n");
+            std::string var = newVar();
+            setVar(cmpf.getResult(), var);
+            fprintf(out_, "  %s %s = 0;\n", tinfo.maskCType.c_str(), var.c_str());
+            return;
+    }
+
+    std::string var = newVar();
+    setVar(cmpf.getResult(), var);
+    std::string maskRatio = tinfo.maskCType.substr(5, tinfo.maskCType.size() - 7); // "vbool32_t" -> "32"
+    if (swap) {
+        fprintf(out_, "  %s %s = __riscv_%s_%s_b%s(%s, %s, %s);\n",
+            tinfo.maskCType.c_str(), var.c_str(), intrinsicOp.c_str(), tinfo.suffix.c_str(),
+            maskRatio.c_str(), rhs.c_str(), lhs.c_str(), vl.c_str());
+    } else {
+        fprintf(out_, "  %s %s = __riscv_%s_%s_b%s(%s, %s, %s);\n",
+            tinfo.maskCType.c_str(), var.c_str(), intrinsicOp.c_str(), tinfo.suffix.c_str(),
+            maskRatio.c_str(), lhs.c_str(), rhs.c_str(), vl.c_str());
+    }
+}
+
+void VectorBridge::emitVectorSelect(mlir::Operation* op) {
+    auto selOp = mlir::cast<mlir::arith::SelectOp>(op);
+    auto vecType = mlir::cast<mlir::VectorType>(selOp.getResult().getType());
+    int vlen = vecType.getShape()[0];
+    auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);
+    std::string vl = computeVL(vlen);
+
+    std::string cond = getVar(selOp.getCondition());
+    std::string trueVal = getVar(selOp.getTrueValue());
+    std::string falseVal = getVar(selOp.getFalseValue());
+
+    std::string var = newVar();
+    setVar(selOp.getResult(), var);
+    fprintf(out_, "  %s %s = __riscv_vmerge_vvm_%s(%s, %s, %s, %s);\n",
+        tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
+        falseVal.c_str(), trueVal.c_str(), cond.c_str(), vl.c_str());
 }
 
 void VectorBridge::emitVectorReduction(mlir::Operation* op) {

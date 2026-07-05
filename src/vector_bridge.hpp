@@ -14,6 +14,7 @@ struct VecTypeInfo {
     std::string bitwidth;   // "32" or "64"  (used in vle32/vle64, vse32/vse64)
     std::string suffix;     // "f32m1" or "f64m1" (used in vfmul_vv_f32m1 etc.)
     std::string scalarCType; // "float" or "double"
+    std::string maskCType;   // "vbool32_t" 等，新增欄位
 };
 
 class VectorBridge {
@@ -55,6 +56,8 @@ private:
     void emitVectorDivf(mlir::Operation* op);
     void emitVectorMaxf(mlir::Operation* op);
     void emitVectorMinf(mlir::Operation* op);
+    void emitVectorCmpf(mlir::Operation* op);
+    void emitVectorSelect(mlir::Operation* op);
     void emitVectorReduction(mlir::Operation* op);
     void emitVectorBroadcast(mlir::Operation* op);
     void emitAffineFor(mlir::Operation* op);
