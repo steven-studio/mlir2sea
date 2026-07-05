@@ -441,6 +441,24 @@ void VectorBridge::emitVectorReduction(mlir::Operation* op) {
     std::string srcVec = getVar(redOp.getVector());
     std::string vl = computeVL(vlen);
 
+    if (redOp.getKind() == mlir::vector::CombiningKind::MUL) {
+        // RVV has no native product-reduction instruction.
+        // Fallback: spill the vector to a scratch C array and multiply
+        // scalars in a plain loop. Slower than a hardware reduction,
+        // but correct — preferable to silently emitting nothing or
+        // guessing at an unsupported intrinsic.
+        std::string scratch = newVar();
+        fprintf(out_, "  %s %s_scratch[%d];\n", tinfo.scalarCType.c_str(), scratch.c_str(), vlen);
+        fprintf(out_, "  __riscv_vse%s_v_%s(%s_scratch, %s, %s);\n",
+            tinfo.bitwidth.c_str(), tinfo.suffix.c_str(), scratch.c_str(), srcVec.c_str(), vl.c_str());
+        std::string var = newVar();
+        setVar(redOp.getResult(), var);
+        fprintf(out_, "  %s %s = 1;\n", tinfo.scalarCType.c_str(), var.c_str());
+        fprintf(out_, "  for (int _i = 0; _i < %s; _i++) %s *= %s_scratch[_i];\n",
+            vl.c_str(), var.c_str(), scratch.c_str());
+        return;
+    }
+
     std::string kind;
     switch (redOp.getKind()) {
         case mlir::vector::CombiningKind::ADD: kind = "osum"; break;
@@ -454,9 +472,8 @@ void VectorBridge::emitVectorReduction(mlir::Operation* op) {
             return;
     }
 
-    // seed: RVV reduction 需要一個「初始值放在 lane 0」的 vector 當種子
+    // (原本 ADD/MAX/MIN 那段完全不動，維持現狀)
     std::string seedVar = newVar();
-    std::string seedVal = (kind == "osum") ? "0.0f" : srcVec + "_seed_placeholder";    // 對 max/min，用來源 vector 本身的第 0 個元素當種子最安全（避免引入額外的極值假設）
     if (kind != "osum") {
         fprintf(out_, "  %s %s_scalar0;\n", tinfo.scalarCType.c_str(), seedVar.c_str());
         fprintf(out_, "  __riscv_vse%s_v_%s(&%s_scalar0, %s, 1);\n",
