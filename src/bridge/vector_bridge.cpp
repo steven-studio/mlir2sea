@@ -216,12 +216,18 @@ void VectorBridge::emitOp(mlir::Operation* op) {
     } else if (auto selOp = mlir::dyn_cast<mlir::arith::SelectOp>(op)) {
         if (mlir::isa<mlir::VectorType>(selOp.getResult().getType()))
             emitVectorSelect(op);
+    } else if (mlir::isa<mlir::vector::CreateMaskOp>(op)) {
+        emitVectorCreateMask(op);
     } else if (mlir::isa<mlir::arith::SubIOp>(op)) {
         emitSubI(op);
     } else if (mlir::isa<mlir::arith::AddIOp>(op)) {
         emitAddI(op);
     } else if (mlir::isa<mlir::arith::ConstantOp>(op)) {
         emitConstant(op);
+    } else if (mlir::isa<mlir::affine::AffineLoadOp>(op)) {
+        emitAffineLoad(op);
+    } else if (mlir::isa<mlir::affine::AffineStoreOp>(op)) {
+        emitAffineStore(op);
     } else if (mlir::isa<mlir::memref::DimOp>(op)) {
         emitMemrefDim(op);
     } else if (mlir::isa<mlir::func::ReturnOp>(op)) {
@@ -247,16 +253,88 @@ void VectorBridge::emitAffineFor(mlir::Operation* op) {
         auto ops = forOp.getUpperBoundOperands();
         hi = !ops.empty() ? getVar(ops[0]) : "/*UNSUPPORTED_UB*/0";
     }
-
     long step = forOp.getStepAsInt();
+
+    // --- 新增：iter_args 處理 ---
+    // 把每個 iter_arg 變成一個迴圈外宣告、迴圈內每輪被覆寫的 C 變數。
+    auto iterArgs = forOp.getRegionIterArgs();   // 迴圈本體裡看到的 block argument
+    auto initOperands = forOp.getInits(); // 迴圈外傳進來的初始值
+    std::vector<std::string> iterVarNames;
+
+    for (size_t i = 0; i < iterArgs.size(); ++i) {
+        mlir::Type argType = iterArgs[i].getType();
+        std::string cType;
+        if (auto vecType = mlir::dyn_cast<mlir::VectorType>(argType)) {
+            int vlen = vecType.getShape()[0];
+            cType = getVecTypeInfo(vecType.getElementType(), vlen).vecCType;
+        } else if (argType.isF64()) {
+            cType = "double";
+        } else {
+            cType = "float";
+        }
+
+        std::string initVar = getVar(initOperands[i]);
+        std::string iterVar = newVar();
+        fprintf(out_, "  %s %s = %s;\n", cType.c_str(), iterVar.c_str(), initVar.c_str());
+
+        setVar(iterArgs[i], iterVar);        // 迴圈本體內引用它 → 指到這個變數
+        setVar(forOp.getResult(i), iterVar); // 迴圈後引用它 → 也是同一個變數
+        iterVarNames.push_back(iterVar);
+    }
+
     fprintf(out_, "  for (int %s = %s; %s < %s; %s += %ld) {\n",
         iv.c_str(), lo.c_str(), iv.c_str(), hi.c_str(), iv.c_str(), step);
 
     loop_stack_.push_back({iv, hi, step});
     for (auto& nested : forOp.getBody()->without_terminator()) emitOp(&nested);
-    loop_stack_.pop_back();
 
+    // affine.yield 本身不進 emitOp 的 switch（因為上面用了 without_terminator()
+    // 跳過了它），這裡直接手動處理：把 yield 出來的值寫回對應的 iter 變數。
+    if (auto yieldOp = mlir::dyn_cast<mlir::affine::AffineYieldOp>(
+            forOp.getBody()->getTerminator())) {
+        auto yieldedVals = yieldOp.getOperands();
+        for (size_t i = 0; i < iterVarNames.size(); ++i) {
+            std::string newVal = getVar(yieldedVals[i]);
+            fprintf(out_, "  %s = %s;\n", iterVarNames[i].c_str(), newVal.c_str());
+        }
+    }
+
+    loop_stack_.pop_back();
     fprintf(out_, "  }\n");
+}
+
+void VectorBridge::emitVectorCreateMask(mlir::Operation* op) {
+    auto maskOp = mlir::cast<mlir::vector::CreateMaskOp>(op);
+    int vlen = mlir::cast<mlir::VectorType>(maskOp.getResult().getType()).getShape()[0];
+
+    // create_mask 本身不帶元素型別，往下找用到它的 arith.select 來推斷。
+    mlir::Type elemType = mlir::Float32Type::get(op->getContext());
+    for (auto* user : maskOp.getResult().getUsers()) {
+        if (auto selOp = mlir::dyn_cast<mlir::arith::SelectOp>(user)) {
+            elemType = mlir::cast<mlir::VectorType>(selOp.getTrueValue().getType()).getElementType();
+            break;
+        }
+    }
+
+    auto tinfo = getVecTypeInfo(elemType, vlen);
+    std::string vl = computeVL(vlen);
+    std::string countVar = getVar(maskOp.getOperand(0));
+
+    // "f32m1" -> "u32m1"，取得對應的無號整數型別/後綴
+    std::string intSuffix = tinfo.suffix;
+    intSuffix[0] = 'u';
+    std::string uintCType = "v" + std::string(tinfo.bitwidth == "64" ? "uint64" : "uint32")
+                            + intSuffix.substr(intSuffix.find('m')) + "_t";    std::string maskBits = tinfo.maskCType.substr(5, tinfo.maskCType.size() - 7); // "vbool32_t" -> "32"
+    std::string vidVar = newVar();
+    fprintf(out_, "  %s %s = __riscv_vid_v_%s(%s);\n",
+        uintCType.c_str(), vidVar.c_str(), intSuffix.c_str(), vl.c_str());
+
+    std::string var = newVar();
+    setVar(maskOp.getResult(), var);
+    fprintf(out_, "  %s %s = __riscv_vmsltu_vx_%s_b%s(%s, (unsigned)%s, %s);\n",
+        tinfo.maskCType.c_str(), var.c_str(),
+        intSuffix.c_str(), maskBits.c_str(),
+        vidVar.c_str(), countVar.c_str(), vl.c_str());
 }
 
 std::string VectorBridge::affineExprToStr(mlir::AffineExpr expr,
@@ -599,6 +677,29 @@ void VectorBridge::emitVectorReduction(mlir::Operation* op) {
 
 void VectorBridge::emitConstant(mlir::Operation* op) {
     auto cst = mlir::cast<mlir::arith::ConstantOp>(op);
+
+    if (auto vecType = mlir::dyn_cast<mlir::VectorType>(cst.getType())) {
+        // 向量常數（例如 affine-super-vectorize 產生的 dense<0.0> : vector<4xf32>）
+        auto denseAttr = mlir::cast<mlir::DenseElementsAttr>(cst.getValue());
+        int vlen = vecType.getShape()[0];
+        auto tinfo = getVecTypeInfo(vecType.getElementType(), vlen);
+        std::string vl = computeVL(vlen);
+
+        double splatVal = 0.0;
+        if (denseAttr.isSplat()) {
+            splatVal = denseAttr.getSplatValue<mlir::APFloat>().convertToDouble();
+        }
+        // 非 splat 的向量常數（每個 lane 值不同）目前先不處理，
+        // affine-super-vectorize 產生的向量常數目前看到的都是 splat。
+
+        std::string var = newVar();
+        setVar(cst.getResult(), var);
+        fprintf(out_, "  %s %s = __riscv_vfmv_v_f_%s(%g, %s);\n",
+            tinfo.vecCType.c_str(), var.c_str(),
+            tinfo.suffix.c_str(), splatVal, vl.c_str());
+        return;
+    }
+
     if (auto idxAttr = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue())) {
         std::string var = newVar();
         setVar(cst.getResult(), var);
@@ -637,6 +738,29 @@ void VectorBridge::emitVectorBroadcast(mlir::Operation* op) {
     fprintf(out_, "  %s %s = __riscv_vfmv_v_f_%s(%s, %s);\n",
         tinfo.vecCType.c_str(), var.c_str(), tinfo.suffix.c_str(),
         getVar(bc.getSource()).c_str(), computeVL(vlen).c_str());
+}
+
+void VectorBridge::emitAffineLoad(mlir::Operation* op) {
+    auto loadOp = mlir::cast<mlir::affine::AffineLoadOp>(op);
+    mlir::Value memref = loadOp.getMemRef();
+    std::string base = getVar(memref);
+    std::string offset = computeFlatOffset(memref, loadOp.getIndices());
+
+    auto elemType = mlir::cast<mlir::MemRefType>(memref.getType()).getElementType();
+    std::string cType = elemType.isF64() ? "double" : "float";
+
+    std::string var = newVar();
+    setVar(loadOp.getResult(), var);
+    fprintf(out_, "  %s %s = %s[%s];\n", cType.c_str(), var.c_str(), base.c_str(), offset.c_str());
+}
+
+void VectorBridge::emitAffineStore(mlir::Operation* op) {
+    auto storeOp = mlir::cast<mlir::affine::AffineStoreOp>(op);
+    mlir::Value memref = storeOp.getMemRef();
+    std::string base = getVar(memref);
+    std::string offset = computeFlatOffset(memref, storeOp.getIndices());
+    std::string val = getVar(storeOp.getValueToStore());
+    fprintf(out_, "  %s[%s] = %s;\n", base.c_str(), offset.c_str(), val.c_str());
 }
 
 void VectorBridge::emitMemrefDim(mlir::Operation* op) {

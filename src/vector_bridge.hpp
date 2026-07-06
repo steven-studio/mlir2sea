@@ -60,6 +60,7 @@ private:
     void emitVectorSqrt(mlir::Operation* op);
     void emitVectorCmpf(mlir::Operation* op);
     void emitVectorSelect(mlir::Operation* op);
+    void emitVectorCreateMask(mlir::Operation* op);   // 新增：對應 vector.create_mask
     void emitVectorReduction(mlir::Operation* op);
     void emitVectorBroadcast(mlir::Operation* op);
     void emitAffineFor(mlir::Operation* op);
@@ -67,5 +68,7 @@ private:
     void emitConstant(mlir::Operation* op);
     void emitSubI(mlir::Operation* op);
     void emitAddI(mlir::Operation* op);
+    void emitAffineLoad(mlir::Operation* op);
+    void emitAffineStore(mlir::Operation* op);
     void emitMemrefDim(mlir::Operation* op);
 };
