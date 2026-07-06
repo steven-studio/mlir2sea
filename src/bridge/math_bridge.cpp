@@ -19,8 +19,8 @@ void MLIRBridge::handleMathSqrt(mlir::Operation* op) {
     ir_ref operand = getRef(op->getOperand(0));
     ir_type ty = mlirTypeToIR(op->getResult(0).getType());
     const char* fname = (ty == IR_DOUBLE) ? "sqrt" : "sqrtf";
-    ir_str name = ir_string(ctx_, fname);
-    ir_str proto = ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty);
+    ir_ref name = ir_str(ctx_, fname);
+    ir_ref proto = ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty);
     ir_ref sqrt_func = ir_const_func(ctx_, name, proto);
     setRef(op->getResult(0), ir_CALL_1(ty, sqrt_func, operand));
 }
@@ -29,7 +29,7 @@ void MLIRBridge::handleMathSin(mlir::Operation* op) {
     ir_ref operand = getRef(op->getOperand(0));
     ir_type ty = mlirTypeToIR(op->getResult(0).getType());
     const char* fname = (ty == IR_DOUBLE) ? "sin" : "sinf";
-    ir_ref func = ir_const_func(ctx_, ir_string(ctx_, fname), ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty));
+    ir_ref func = ir_const_func(ctx_, ir_str(ctx_, fname), ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty));
     setRef(op->getResult(0), ir_CALL_1(ty, func, operand));
 }
 
@@ -37,7 +37,7 @@ void MLIRBridge::handleMathCos(mlir::Operation* op) {
     ir_ref operand = getRef(op->getOperand(0));
     ir_type ty = mlirTypeToIR(op->getResult(0).getType());
     const char* fname = (ty == IR_DOUBLE) ? "cos" : "cosf";
-    ir_ref func = ir_const_func(ctx_, ir_string(ctx_, fname), ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty));
+    ir_ref func = ir_const_func(ctx_, ir_str(ctx_, fname), ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty));
     setRef(op->getResult(0), ir_CALL_1(ty, func, operand));
 }
 
@@ -45,7 +45,7 @@ void MLIRBridge::handleMathTanh(mlir::Operation* op) {
     ir_ref operand = getRef(op->getOperand(0));
     ir_type ty = mlirTypeToIR(op->getResult(0).getType());
     const char* fname = (ty == IR_DOUBLE) ? "tanh" : "tanhf";
-    ir_ref func = ir_const_func(ctx_, ir_string(ctx_, fname), ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty));
+    ir_ref func = ir_const_func(ctx_, ir_str(ctx_, fname), ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty));
     setRef(op->getResult(0), ir_CALL_1(ty, func, operand));
 }
 
@@ -53,7 +53,7 @@ void MLIRBridge::handleMathLog(mlir::Operation* op) {
     ir_ref operand = getRef(op->getOperand(0));
     ir_type ty = mlirTypeToIR(op->getResult(0).getType());
     const char* fname = (ty == IR_DOUBLE) ? "log" : "logf";
-    ir_ref func = ir_const_func(ctx_, ir_string(ctx_, fname), ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty));
+    ir_ref func = ir_const_func(ctx_, ir_str(ctx_, fname), ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty));
     setRef(op->getResult(0), ir_CALL_1(ty, func, operand));
 }
 
@@ -61,7 +61,7 @@ void MLIRBridge::handleMathLog2(mlir::Operation* op) {
     ir_ref operand = getRef(op->getOperand(0));
     ir_type ty = mlirTypeToIR(op->getResult(0).getType());
     const char* fname = (ty == IR_DOUBLE) ? "log2" : "log2f";
-    ir_ref func = ir_const_func(ctx_, ir_string(ctx_, fname), ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty));
+    ir_ref func = ir_const_func(ctx_, ir_str(ctx_, fname), ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty));
     setRef(op->getResult(0), ir_CALL_1(ty, func, operand));
 }
 
@@ -70,8 +70,8 @@ void MLIRBridge::handleMathPow(mlir::Operation* op) {
     ir_ref rhs = getRef(op->getOperand(1));
     ir_type ty = mlirTypeToIR(op->getResult(0).getType());
     const char* fname = (ty == IR_DOUBLE) ? "pow" : "powf";
-    ir_str proto = ir_proto_2(ctx_, IR_BUILTIN_FUNC, ty, ty, ty);
-    ir_ref func = ir_const_func(ctx_, ir_string(ctx_, fname), proto);
+    ir_ref proto = ir_proto_2(ctx_, IR_BUILTIN_FUNC, ty, ty, ty);
+    ir_ref func = ir_const_func(ctx_, ir_str(ctx_, fname), proto);
     setRef(op->getResult(0), ir_CALL_2(ty, func, lhs, rhs));
 }
 
@@ -79,8 +79,8 @@ void MLIRBridge::handleMathExp(mlir::Operation* op) {
     ir_ref operand = getRef(op->getOperand(0));
     ir_type ty = mlirTypeToIR(op->getResult(0).getType());
     const char* fname = (ty == IR_DOUBLE) ? "exp" : "expf";
-    ir_str name = ir_string(ctx_, fname);
-    ir_str proto = ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty);
+    ir_ref name = ir_str(ctx_, fname);
+    ir_ref proto = ir_proto_1(ctx_, IR_BUILTIN_FUNC, ty, ty);
     ir_ref exp_func = ir_const_func(ctx_, name, proto);
     setRef(op->getResult(0), ir_CALL_1(ty, exp_func, operand));
 }

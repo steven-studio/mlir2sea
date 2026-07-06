@@ -42,15 +42,15 @@ static ir_type mlirTypeToIR(mlir::Type type) {
 }
 
 static ir_ref emitMathCall(ir_ctx* ctx, const char* fname, ir_type ty, ir_ref arg) {
-    ir_str name = ir_string(ctx, fname);
-    ir_str proto = ir_proto_1(ctx, IR_BUILTIN_FUNC, ty, ty);
+    ir_ref name = ir_str(ctx, fname);
+    ir_ref proto = ir_proto_1(ctx, IR_BUILTIN_FUNC, ty, ty);
     ir_ref func = ir_const_func(ctx, name, proto);
     return ir_CALL_1(ty, func, arg);
 }
 
 static ir_ref emitMathCall2(ir_ctx* ctx, const char* fname, ir_type ty, ir_ref a, ir_ref b) {
-    ir_str name = ir_string(ctx, fname);
-    ir_str proto = ir_proto_2(ctx, IR_BUILTIN_FUNC, ty, ty, ty);
+    ir_ref name = ir_str(ctx, fname);
+    ir_ref proto = ir_proto_2(ctx, IR_BUILTIN_FUNC, ty, ty, ty);
     ir_ref func = ir_const_func(ctx, name, proto);
     return ir_CALL_2(ty, func, a, b);
 }
@@ -346,11 +346,11 @@ static void emitSoNOp(ir_ctx* ctx, mlir::Operation* op) {
         ir_type ret_ty = callOp.getNumResults() > 0 ?
             mlirTypeToIR(callOp.getResult(0).getType()) : IR_VOID;
 
-        ir_ref fname = ir_string(ctx, callee.c_str());
+        ir_ref fname = ir_str(ctx, callee.c_str());
 
         // 建 proto（根據參數數量）
         uint32_t argc = callOp.getNumOperands();
-        ir_str proto = ir_proto_0(ctx, IR_EXTERN, ret_ty);
+        ir_ref proto = ir_proto_0(ctx, IR_EXTERN, ret_ty);
 
         ir_ref func_ref = ir_const_func(ctx, fname, proto);
 
